@@ -104,7 +104,7 @@ Provide a complete, accurate, structured extraction suitable for programmatic us
       },
     ],
     temperature: 0.1,
-    max_completion_tokens: 4000, // Increased to handle large documents with many attributes
+    max_completion_tokens: 8000, // Increased to handle large documents with many attributes
   });
 
   const choice = response.choices?.[0];

@@ -11,14 +11,61 @@ import type {
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
+// Get token from localStorage
+function getToken(): string | null {
+  return localStorage.getItem("auth_token");
+}
+
+// Create headers with auth token if available
+function createHeaders(includeAuth = true): HeadersInit {
+  const headers: HeadersInit = {};
+  if (includeAuth) {
+    const token = getToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
 async function safeFetch(
   input: RequestInfo,
-  init?: RequestInit
+  init?: RequestInit,
+  includeAuth = true
 ): Promise<any> {
-  const response = await fetch(input, init);
+  const headers = {
+    ...createHeaders(includeAuth),
+    ...(init?.headers || {}),
+  };
+
+  // Don't override Content-Type if it's FormData
+  if (!(init?.body instanceof FormData)) {
+    if (!headers["Content-Type"] && !headers["content-type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+  }
+
+  const response = await fetch(input, {
+    ...init,
+    headers,
+  });
+
   if (!response.ok) {
+    // Handle 401 Unauthorized - token expired or invalid
+    if (response.status === 401) {
+      localStorage.removeItem("auth_token");
+      // Trigger a custom event that the app can listen to
+      window.dispatchEvent(new CustomEvent("auth:logout"));
+    }
     const text = await response.text();
-    throw new Error(text || "Request failed");
+    let errorMessage = text || "Request failed";
+    try {
+      const json = JSON.parse(text);
+      errorMessage = json.message || errorMessage;
+    } catch {
+      // Keep the text as is
+    }
+    throw new Error(errorMessage);
   }
   return response.json();
 }
@@ -189,6 +236,57 @@ export async function getDraft(id: string): Promise<EstimateDraft> {
 }
 
 export async function removeDraft(id: string): Promise<void> {
-  await fetch(`${API_BASE}/api/drafts/${id}`, { method: "DELETE" });
+  await safeFetch(`${API_BASE}/api/drafts/${id}`, { method: "DELETE" });
+}
+
+// Authentication functions
+export interface LoginResponse {
+  message: string;
+  token: string;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+  };
+}
+
+export interface RegisterResponse {
+  message: string;
+  token: string;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+  };
+}
+
+export async function login(username: string, password: string): Promise<LoginResponse> {
+  return safeFetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  }, false);
+}
+
+export async function register(
+  username: string,
+  email: string,
+  password: string
+): Promise<RegisterResponse> {
+  return safeFetch(`${API_BASE}/api/auth/register`, {
+    method: "POST",
+    body: JSON.stringify({ username, email, password }),
+  }, false);
+}
+
+export async function verifyToken(token: string): Promise<{ user: { id: string; username: string; email: string } }> {
+  return safeFetch(`${API_BASE}/api/auth/verify`, {
+    method: "GET",
+  });
+}
+
+export async function logout(token: string): Promise<{ message: string }> {
+  return safeFetch(`${API_BASE}/api/auth/logout`, {
+    method: "POST",
+  });
 }
 

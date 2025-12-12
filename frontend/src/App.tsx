@@ -24,6 +24,7 @@ import {
   saveDraft,
   getDraft,
 } from "./services/api";
+import { useAuth } from "./contexts/AuthContext";
 
 const ITEMS_PER_PAGE = 10;
 
@@ -614,11 +615,31 @@ function EditableItemsTable({
 }
 
 function App() {
+  const { user, logout } = useAuth();
   const [knowledgeBase, setKnowledgeBase] = useState<BuildSummary[]>([]);
   const [totalBuilds, setTotalBuilds] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close user menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+
+    if (isUserMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isUserMenuOpen]);
   const [matchingFiles, setMatchingFiles] = useState<File[]>([]);
   const [processingAI, setProcessingAI] = useState(false);
   const [matching, setMatching] = useState(false);
@@ -1176,10 +1197,11 @@ function App() {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand__icon">
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <rect x="4" y="4" width="24" height="24" rx="4" stroke="currentColor" strokeWidth="2" />
-              <path d="M12 16L16 20L24 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <img
+              src="/logo2.png"
+              alt="Logo"
+              style={{ width: "34px", height: "34px", objectFit: "contain" }}
+            />
           </div>
           <div>
             <p className="brand__title">AI Powered Estimation System</p>
@@ -1283,6 +1305,65 @@ function App() {
         <header className="hero">
           <div>
             <h1>{heroTitle}</h1>
+          </div>
+          <div style={{ position: "relative" }} ref={userMenuRef}>
+            <button
+              type="button"
+              onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+              className="user-menu-trigger"
+              aria-label="User menu"
+              aria-expanded={isUserMenuOpen}
+            >
+              <div className="user-avatar">
+                <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                  <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M4 17c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </div>
+              <span className="user-menu-username">{user?.username || "User"}</span>
+              <svg 
+                width="12" 
+                height="12" 
+                viewBox="0 0 16 16" 
+                fill="none"
+                style={{
+                  transform: isUserMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.2s ease"
+                }}
+              >
+                <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            {isUserMenuOpen && (
+              <div className="user-menu-dropdown">
+                <div className="user-menu-header">
+                  <div className="user-avatar user-avatar--large">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                      <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
+                      <path d="M4 17c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                  <div className="user-menu-info">
+                    <p className="user-menu-name">{user?.username || "User"}</p>
+                    <p className="user-menu-email">{user?.email || ""}</p>
+                  </div>
+                </div>
+                <div className="user-menu-divider"></div>
+                <button
+                  type="button"
+                  className="user-menu-item user-menu-item--danger"
+                  onClick={async () => {
+                    setIsUserMenuOpen(false);
+                    await logout();
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                    <path d="M6 2H4a2 2 0 00-2 2v12a2 2 0 002 2h2M12 2h2a2 2 0 012 2v12a2 2 0 01-2 2h-2M6 9h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>Logout</span>
+                </button>
+              </div>
+            )}
           </div>
         </header>
 

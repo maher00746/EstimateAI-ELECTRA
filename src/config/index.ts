@@ -17,5 +17,7 @@ export const config = {
   airweaveApiKey: process.env.AIRWEAVE_API_KEY ?? "",
   airweaveCollectionId: process.env.AIRWEAVE_COLLECTION_ID ?? "",
   airweaveOrganizationId: process.env.AIRWEAVE_ORGANIZATION_ID ?? "",
+  jwtSecret: process.env.JWT_SECRET ?? "your-secret-key-change-in-production",
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "7d",
 };
 

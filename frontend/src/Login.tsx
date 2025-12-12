@@ -1,17 +1,46 @@
 import { useState } from "react";
+import { useAuth } from "./contexts/AuthContext";
 
-interface LoginProps {
-  onLogin: () => void;
-}
-
-function Login({ onLogin }: LoginProps) {
+function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const { login, register } = useAuth();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // For demo purposes, any input will log in
-    onLogin();
+    setError("");
+    setLoading(true);
+
+    try {
+      if (isRegistering) {
+        if (!username || !email || !password) {
+          setError("All fields are required");
+          setLoading(false);
+          return;
+        }
+        if (password.length < 6) {
+          setError("Password must be at least 6 characters long");
+          setLoading(false);
+          return;
+        }
+        await register(username, email, password);
+      } else {
+        if (!username || !password) {
+          setError("Username and password are required");
+          setLoading(false);
+          return;
+        }
+        await login(username, password);
+      }
+    } catch (err) {
+      setError((err as Error).message || "Authentication failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -32,6 +61,28 @@ function Login({ onLogin }: LoginProps) {
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
+          {isRegistering && (
+            <div className="login-form__group">
+              <label htmlFor="email" className="login-form__label">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <rect x="2" y="3" width="14" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M2 5l7 4 7-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Email
+              </label>
+              <input
+                id="email"
+                type="email"
+                className="login-form__input"
+                placeholder="Enter your email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoFocus={isRegistering}
+                disabled={loading}
+              />
+            </div>
+          )}
+
           <div className="login-form__group">
             <label htmlFor="username" className="login-form__label">
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
@@ -47,7 +98,8 @@ function Login({ onLogin }: LoginProps) {
               placeholder="Enter your username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              autoFocus
+              autoFocus={!isRegistering}
+              disabled={loading}
             />
           </div>
 
@@ -63,49 +115,86 @@ function Login({ onLogin }: LoginProps) {
               id="password"
               type="password"
               className="login-form__input"
-              placeholder="Enter your password"
+              placeholder={isRegistering ? "At least 6 characters" : "Enter your password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              disabled={loading}
             />
           </div>
 
-          <button type="submit" className="login-form__submit">
-            <span>Sign In</span>
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M7 3l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        </form>
+          {error && (
+            <div style={{
+              padding: "0.75rem",
+              backgroundColor: "rgba(239, 68, 68, 0.1)",
+              border: "1px solid rgba(239, 68, 68, 0.3)",
+              borderRadius: "8px",
+              color: "#ef4444",
+              fontSize: "0.875rem",
+              marginBottom: "1rem"
+            }}>
+              {error}
+            </div>
+          )}
 
-        <div className="login-card__footer">
-          <div className="login-features">
-            <div className="login-feature">
-              <div className="login-feature__icon">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <path d="M10 2l2.5 5 5.5.5-4 4 1 5.5-5-2.5-5 2.5 1-5.5-4-4 5.5-.5L10 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <span>AI-Powered Analysis</span>
-            </div>
-            <div className="login-feature">
-              <div className="login-feature__icon">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M7 10l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <span>Smart Matching</span>
-            </div>
-            <div className="login-feature">
-              <div className="login-feature__icon">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-              </div>
-              <span>Knowledge Base</span>
-            </div>
+          <button type="submit" className="login-form__submit" disabled={loading}>
+            <span>{loading ? (isRegistering ? "Registering..." : "Signing in...") : (isRegistering ? "Register" : "Sign In")}</span>
+            {!loading && (
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M7 3l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
+
+          <div style={{ 
+            marginTop: "1rem", 
+            textAlign: "center",
+            fontSize: "0.875rem",
+            color: "rgba(227,233,255,0.7)"
+          }}>
+            {isRegistering ? (
+              <span>
+                Already have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRegistering(false);
+                    setError("");
+                    setEmail("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#4c6ef5",
+                    cursor: "pointer",
+                    textDecoration: "underline"
+                  }}
+                >
+                  Sign in
+                </button>
+              </span>
+            ) : (
+              <span>
+                Don't have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRegistering(true);
+                    setError("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#4c6ef5",
+                    cursor: "pointer",
+                    textDecoration: "underline"
+                  }}
+                >
+                  Register
+                </button>
+              </span>
+            )}
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );
