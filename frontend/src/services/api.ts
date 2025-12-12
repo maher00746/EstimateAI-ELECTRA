@@ -33,21 +33,48 @@ async function safeFetch(
   init?: RequestInit,
   includeAuth = true
 ): Promise<any> {
-  const headers = {
-    ...createHeaders(includeAuth),
-    ...(init?.headers || {}),
-  };
+  const authHeaders = createHeaders(includeAuth);
+  const initHeaders = init?.headers || {};
+
+  // Convert HeadersInit to a plain object for easier manipulation
+  const headersObj: Record<string, string> = {};
+
+  // Add auth headers
+  if (authHeaders instanceof Headers) {
+    authHeaders.forEach((value, key) => {
+      headersObj[key] = value;
+    });
+  } else if (Array.isArray(authHeaders)) {
+    authHeaders.forEach(([key, value]) => {
+      headersObj[key] = value;
+    });
+  } else {
+    Object.assign(headersObj, authHeaders);
+  }
+
+  // Add init headers
+  if (initHeaders instanceof Headers) {
+    initHeaders.forEach((value, key) => {
+      headersObj[key] = value;
+    });
+  } else if (Array.isArray(initHeaders)) {
+    initHeaders.forEach(([key, value]) => {
+      headersObj[key] = value;
+    });
+  } else {
+    Object.assign(headersObj, initHeaders);
+  }
 
   // Don't override Content-Type if it's FormData
   if (!(init?.body instanceof FormData)) {
-    if (!headers["Content-Type"] && !headers["content-type"]) {
-      headers["Content-Type"] = "application/json";
+    if (!headersObj["Content-Type"] && !headersObj["content-type"]) {
+      headersObj["Content-Type"] = "application/json";
     }
   }
 
   const response = await fetch(input, {
     ...init,
-    headers,
+    headers: headersObj,
   });
 
   if (!response.ok) {
@@ -281,10 +308,13 @@ export async function register(
 export async function verifyToken(token: string): Promise<{ user: { id: string; username: string; email: string } }> {
   return safeFetch(`${API_BASE}/api/auth/verify`, {
     method: "GET",
-  });
+    headers: {
+      "Authorization": `Bearer ${token}`,
+    },
+  }, false);
 }
 
-export async function logout(token: string): Promise<{ message: string }> {
+export async function logout(): Promise<{ message: string }> {
   return safeFetch(`${API_BASE}/api/auth/logout`, {
     method: "POST",
   });

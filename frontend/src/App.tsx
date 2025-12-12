@@ -389,12 +389,12 @@ function TemplateEditorModal({
           <div className="attributes-editor">
             <h3>Attributes</h3>
             <div className="attributes-table-wrapper">
-            <table className="attributes-table resizable-table">
+              <table className="attributes-table resizable-table">
                 <thead>
                   <tr>
-                  <ResizableTh resize={attributeResize} index={0}>Attribute</ResizableTh>
-                  <ResizableTh resize={attributeResize} index={1}>Value</ResizableTh>
-                  <ResizableTh resize={attributeResize} index={2}>Price</ResizableTh>
+                    <ResizableTh resize={attributeResize} index={0}>Attribute</ResizableTh>
+                    <ResizableTh resize={attributeResize} index={1}>Value</ResizableTh>
+                    <ResizableTh resize={attributeResize} index={2}>Price</ResizableTh>
                   </tr>
                 </thead>
                 <tbody>
@@ -1037,15 +1037,7 @@ function App() {
     handleComparisonSelect(rowIndex, source);
   };
 
-  const handleProceedToPricing = () => {
-    const selected = Object.values(comparisonSelections);
-    if (!selected.length) {
-      setFeedback("Select at least one item before proceeding to pricing.");
-      setTimeout(() => setFeedback(""), 3000);
-      return;
-    }
-    setPricingSelections(selected);
-  };
+  // Note: handleProceedToPricing is not currently used - pricing selections are set in the Finalize button handler
 
   const processingMessage = processingAI
     ? matching
@@ -1321,10 +1313,10 @@ function App() {
                 </svg>
               </div>
               <span className="user-menu-username">{user?.username || "User"}</span>
-              <svg 
-                width="12" 
-                height="12" 
-                viewBox="0 0 16 16" 
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
                 fill="none"
                 style={{
                   transform: isUserMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
@@ -1459,20 +1451,20 @@ function App() {
                           onClick={() => handleRowClick(build.link_to_file)}
                           className="kb-table__row"
                         >
-                        <td className="kb-table__filename">{renderCell(build.originalName)}</td>
-                        <td className="kb-table__date">{renderCell(new Date(build.createdAt).toLocaleDateString())}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes.CPU || build.attributes.cpu))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes["CPU Cooler"]))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes.Motherboard))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes.Memory || build.attributes.memory))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes.Storage || build.attributes.storage))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes["Video Card"] || build.attributes.gpu))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes.Case))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes["Power Supply"]))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes["Operating System"]))}</td>
-                        <td>{renderCell(getAttributeValue(build.attributes.Monitor))}</td>
-                        <td className="kb-table__price">{renderCell(build.totalPrice || "—")}</td>
-                        <td className="kb-table__id">{renderCell(build.requestId.slice(0, 8))}</td>
+                          <td className="kb-table__filename">{renderCell(build.originalName)}</td>
+                          <td className="kb-table__date">{renderCell(new Date(build.createdAt).toLocaleDateString())}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes.CPU || build.attributes.cpu))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes["CPU Cooler"]))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes.Motherboard))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes.Memory || build.attributes.memory))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes.Storage || build.attributes.storage))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes["Video Card"] || build.attributes.gpu))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes.Case))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes["Power Supply"]))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes["Operating System"]))}</td>
+                          <td>{renderCell(getAttributeValue(build.attributes.Monitor))}</td>
+                          <td className="kb-table__price">{renderCell(build.totalPrice || "—")}</td>
+                          <td className="kb-table__id">{renderCell(build.requestId.slice(0, 8))}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1643,107 +1635,105 @@ function App() {
             </div>
             {boqResults.comparisons.length > 0 ? (
               <>
-              <div className="table-wrapper table-wrapper--no-x" style={{ marginTop: "1.25rem" }}>
-                <table className="matches-table resizable-table">
-                  <thead>
-                    <tr>
-                      <th />
-                      <ResizableTh resize={comparisonResize} index={0}>BOQ item</ResizableTh>
-                      <ResizableTh resize={comparisonResize} index={1}>Drawing item</ResizableTh>
-                      <ResizableTh resize={comparisonResize} index={2}>Action</ResizableTh>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {boqResults.comparisons.map((row, idx) => (
-                      <tr key={`combined-compare-${idx}`} className={getComparisonClass(row.status)}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={!!comparisonChecked[idx]}
-                            onChange={(e) => handleComparisonCheck(idx, e.target.checked)}
-                          />
-                        </td>
-                        <td
-                          className={`selectable-cell ${row.boq_item ? "is-clickable" : "is-disabled"} ${
-                            comparisonSelections[idx] === "boq" ? "is-selected" : ""
-                          }`}
-                          onClick={() => handleComparisonCellSelect(idx, "boq", !!row.boq_item)}
-                        >
-                          {renderCell(
-                            row.boq_item
-                              ? `${row.boq_item.description || "—"} (${row.boq_item.quantity || "?"} ${row.boq_item.unit || ""}${row.boq_item.size ? `, ${row.boq_item.size}` : ""})`
-                              : "—"
-                          )}
-                        </td>
-                        <td
-                          className={`selectable-cell ${row.drawing_item ? "is-clickable" : "is-disabled"} ${
-                            comparisonSelections[idx] === "drawing" ? "is-selected" : ""
-                          }`}
-                          onClick={() => handleComparisonCellSelect(idx, "drawing", !!row.drawing_item)}
-                        >
-                          {renderCell(
-                            row.drawing_item
-                              ? `${row.drawing_item.description || "—"} (${row.drawing_item.quantity || "?"} ${row.drawing_item.unit || ""}${row.drawing_item.size ? `, ${row.drawing_item.size}` : ""})`
-                              : "—"
-                          )}
-                        </td>
-                        <td>
-                          {row.status === "match_exact" ? null : (
-                            <select
-                              className="form-input form-input--table"
-                              value={comparisonSelections[idx] || ""}
-                              onChange={(e) => handleComparisonSelect(idx, e.target.value as "drawing" | "boq")}
-                            >
-                              <option value="">Choose source</option>
-                              {row.boq_item && <option value="boq">Select from BOQ</option>}
-                              {row.drawing_item && <option value="drawing">Select from Drawings</option>}
-                            </select>
-                          )}
-                        </td>
+                <div className="table-wrapper table-wrapper--no-x" style={{ marginTop: "1.25rem" }}>
+                  <table className="matches-table resizable-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        <ResizableTh resize={comparisonResize} index={0}>BOQ item</ResizableTh>
+                        <ResizableTh resize={comparisonResize} index={1}>Drawing item</ResizableTh>
+                        <ResizableTh resize={comparisonResize} index={2}>Action</ResizableTh>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="table-actions" style={{ paddingTop: "0.75rem" }}>
-                <button
-                  type="button"
-                  className={`btn-match ${hasAnyComparisonChecked && hasMissingComparisonSelection ? "is-disabled" : ""}`}
-                  onClick={() => {
-                    if (hasAnyComparisonChecked && hasMissingComparisonSelection) {
-                      setFeedback("Choose a source (BOQ or Drawing) for each selected row.");
-                      setTimeout(() => setFeedback(""), 3000);
-                      return;
-                    }
-                    const selections: Array<{ item: ExtractedItem; source: "drawing" | "boq" }> = [];
-                    let missingSource = false;
-                    boqResults.comparisons.forEach((row, idx) => {
-                      if (!comparisonChecked[idx]) return;
-                      if (row.status === "match_exact") {
-                        if (row.boq_item) selections.push({ item: row.boq_item, source: "boq" });
-                        else if (row.drawing_item) selections.push({ item: row.drawing_item, source: "drawing" });
+                    </thead>
+                    <tbody>
+                      {boqResults.comparisons.map((row, idx) => (
+                        <tr key={`combined-compare-${idx}`} className={getComparisonClass(row.status)}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={!!comparisonChecked[idx]}
+                              onChange={(e) => handleComparisonCheck(idx, e.target.checked)}
+                            />
+                          </td>
+                          <td
+                            className={`selectable-cell ${row.boq_item ? "is-clickable" : "is-disabled"} ${comparisonSelections[idx] === "boq" ? "is-selected" : ""
+                              }`}
+                            onClick={() => handleComparisonCellSelect(idx, "boq", !!row.boq_item)}
+                          >
+                            {renderCell(
+                              row.boq_item
+                                ? `${row.boq_item.description || "—"} (${row.boq_item.quantity || "?"} ${row.boq_item.unit || ""}${row.boq_item.size ? `, ${row.boq_item.size}` : ""})`
+                                : "—"
+                            )}
+                          </td>
+                          <td
+                            className={`selectable-cell ${row.drawing_item ? "is-clickable" : "is-disabled"} ${comparisonSelections[idx] === "drawing" ? "is-selected" : ""
+                              }`}
+                            onClick={() => handleComparisonCellSelect(idx, "drawing", !!row.drawing_item)}
+                          >
+                            {renderCell(
+                              row.drawing_item
+                                ? `${row.drawing_item.description || "—"} (${row.drawing_item.quantity || "?"} ${row.drawing_item.unit || ""}${row.drawing_item.size ? `, ${row.drawing_item.size}` : ""})`
+                                : "—"
+                            )}
+                          </td>
+                          <td>
+                            {row.status === "match_exact" ? null : (
+                              <select
+                                className="form-input form-input--table"
+                                value={comparisonSelections[idx] || ""}
+                                onChange={(e) => handleComparisonSelect(idx, e.target.value as "drawing" | "boq")}
+                              >
+                                <option value="">Choose source</option>
+                                {row.boq_item && <option value="boq">Select from BOQ</option>}
+                                {row.drawing_item && <option value="drawing">Select from Drawings</option>}
+                              </select>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="table-actions" style={{ paddingTop: "0.75rem" }}>
+                  <button
+                    type="button"
+                    className={`btn-match ${hasAnyComparisonChecked && hasMissingComparisonSelection ? "is-disabled" : ""}`}
+                    onClick={() => {
+                      if (hasAnyComparisonChecked && hasMissingComparisonSelection) {
+                        setFeedback("Choose a source (BOQ or Drawing) for each selected row.");
+                        setTimeout(() => setFeedback(""), 3000);
                         return;
                       }
-                      const chosen = comparisonSelections[idx];
-                      if (!chosen) {
-                        missingSource = true;
+                      const selections: Array<{ item: ExtractedItem; source: "drawing" | "boq" }> = [];
+                      let missingSource = false;
+                      boqResults.comparisons.forEach((row, idx) => {
+                        if (!comparisonChecked[idx]) return;
+                        if (row.status === "match_exact") {
+                          if (row.boq_item) selections.push({ item: row.boq_item, source: "boq" });
+                          else if (row.drawing_item) selections.push({ item: row.drawing_item, source: "drawing" });
+                          return;
+                        }
+                        const chosen = comparisonSelections[idx];
+                        if (!chosen) {
+                          missingSource = true;
+                          return;
+                        }
+                        if (chosen === "boq" && row.boq_item) selections.push({ item: row.boq_item, source: "boq" });
+                        if (chosen === "drawing" && row.drawing_item) selections.push({ item: row.drawing_item, source: "drawing" });
+                      });
+                      if (missingSource) {
+                        setFeedback("Select source for all checked rows (unless they are auto-matched).");
+                        setTimeout(() => setFeedback(""), 3000);
                         return;
                       }
-                      if (chosen === "boq" && row.boq_item) selections.push({ item: row.boq_item, source: "boq" });
-                      if (chosen === "drawing" && row.drawing_item) selections.push({ item: row.drawing_item, source: "drawing" });
-                    });
-                    if (missingSource) {
-                      setFeedback("Select source for all checked rows (unless they are auto-matched).");
-                      setTimeout(() => setFeedback(""), 3000);
-                      return;
-                    }
-                    setFinalizeItems(selections);
-                    setActiveEstimateStep("finalize");
-                  }}
-                >
-                  Finalize
-                </button>
-              </div>
+                      setFinalizeItems(selections);
+                      setActiveEstimateStep("finalize");
+                    }}
+                  >
+                    Finalize
+                  </button>
+                </div>
               </>
             ) : (
               <p className="empty-state">No comparisons yet.</p>
