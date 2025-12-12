@@ -24,7 +24,8 @@
     "openai": "^6.9.0",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.17.2",
-    "string-similarity": "^4.0.4"
+    "string-similarity": "^4.0.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.5",

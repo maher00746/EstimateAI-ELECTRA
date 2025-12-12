@@ -1,92 +1,97 @@
-import OpenAI from "openai";
-import { AttributeMap, AttributeValue } from "../../types/build";
+import { config } from "../../config";
+import { AttributeMap, ExtractedItem } from "../../types/build";
+import { getOpenAiClient } from "../openai/client";
 
-let cachedClient: OpenAI | null = null;
-
-function getOpenAIClient(): OpenAI {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set");
-  }
-  if (!cachedClient) {
-    cachedClient = new OpenAI({ apiKey });
-  }
-  return cachedClient;
-}
-
-async function parseJsonFromMessage(message: string): Promise<Record<string, unknown>> {
-  const jsonMatch = message.match(/\{[\s\S]*\}/);
+async function parseJsonFromMessage(message: string): Promise<unknown> {
+  const arrayMatch = message.match(/\[[\s\S]*\]/);
+  const objectMatch = message.match(/\{[\s\S]*\}/);
+  const jsonMatch = arrayMatch?.[0] ?? objectMatch?.[0];
   if (!jsonMatch) {
     throw new Error("OpenAI response did not include JSON");
   }
-  return JSON.parse(jsonMatch[0]);
+  return JSON.parse(jsonMatch);
 }
 
-function toAttributeMap(payload: unknown): AttributeMap {
-  if (
-    payload &&
-    typeof payload === "object" &&
-    !Array.isArray(payload)
-  ) {
-    return Object.entries(payload).reduce<AttributeMap>((acc, [key, value]) => {
-      if (value === null || value === undefined) return acc;
+function toItemsArray(payload: unknown): ExtractedItem[] {
+  const items = Array.isArray(payload)
+    ? payload
+    : (payload && typeof payload === "object" && "items" in (payload as Record<string, unknown>))
+      ? (payload as Record<string, unknown>).items
+      : null;
+  if (!Array.isArray(items)) return [];
 
-      // Check if value is an object with value and price properties
-      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-        const obj = value as Record<string, unknown>;
-        const attrValue: AttributeValue = {
-          value: String(obj.value || ""),
-          price: obj.price ? String(obj.price) : undefined,
-        };
-        acc[key] = attrValue;
-      } else {
-        // Backward compatibility: if it's a string, just store it as is
-        acc[key] = String(value);
-      }
-      return acc;
-    }, {});
-  }
-  return {};
+  return items
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item))
+    .map((record) => ({
+      item_number: record.item_number as string | undefined,
+      description: record.description as string | undefined,
+      capacity: record.capacity as string | undefined,
+      size: record.size as string | undefined,
+      quantity: record.quantity as string | undefined,
+      unit: record.unit as string | undefined,
+      full_description: record.full_description as string | undefined,
+    }));
+}
+
+function structuredItemsToAttributeMap(items: ExtractedItem[]): AttributeMap {
+  return items.reduce<AttributeMap>((acc, item, index) => {
+    const label = item.item_number || item.description || `Item ${index + 1}`;
+
+    const parts: string[] = [];
+    if (item.description) parts.push(item.description);
+    if (item.capacity) parts.push(`Capacity: ${item.capacity}`);
+    if (item.size) parts.push(`Size: ${item.size}`);
+    if (item.quantity || item.unit) {
+      parts.push(`Qty: ${item.quantity ?? ""}${item.unit ? ` ${item.unit}` : ""}`.trim());
+    }
+    if (item.full_description) parts.push(item.full_description);
+
+    acc[label] = parts.filter(Boolean).join(" | ") || "—";
+    return acc;
+  }, {});
 }
 
 export async function extractAttributesWithOpenAI(
   rawText: string,
   fileName: string
-): Promise<{ attributes: AttributeMap; totalPrice?: string }> {
+): Promise<{ attributes: AttributeMap; items: ExtractedItem[]; totalPrice?: string }> {
   const trimmed = rawText.replace(/\s+/g, " ").slice(0, 32000);
   const prompt = `
-You are a meticulous PC build analyst. Extract every attribute name, its value, and its individual price (if mentioned) from the document.
-For each attribute, extract both the component description and its price if available.
+You are a senior MEP estimator, in a company selling "Diesel Generators or Diesel-fired Boilers with the diesel fuel". Your task is to extract every measurable requirement, component and attribute from the supplied drawings and return them in a fully structured machine-readable format. Work carefully and exhaustively.
 
-Respond with a single JSON object like:
+Scope
+
+• Extract all mechanical, electrical, instrumentation items directly shown or tagged in the drawings.
+• NO civil related items (like walls) 
+• Capture every attribute including size, diameter, capacity, material, rating, quantity, notes and standards (UL, NFPA, ASTM etc).
+• Include all Filling Point, Storage Tank, Pump, Day Tank, Piping, Valves (including BV and CV), Strainers, Leak Sensors, Level Probes (if any), Level Switches, Tank Vents, Master Control Panel, Overfill Alarm Units, Flexible Hoses, and Electrical Materials (Wiring and conduits).
+• Count all occurrences of each labelled item (e.g., BV tags, CV tags, pipe diameters, vent sizes).
+• Do not infer linear pipe lengths unless explicitly given.
+• Do not omit any attribute.
+
+Output format
+
+Return a single JSON array where each item is an object with these fields:
+
 {
-  "totalPrice": "$2,800.00",
-  "attributes": {
-    "CPU": {
-      "value": "Intel i9-13900K",
-      "price": "$589.99"
-    },
-    "GPU": {
-      "value": "NVIDIA RTX 4090",
-      "price": "$1,599.99"
-    },
-    "Memory": {
-      "value": "32GB DDR5",
-      "price": "$149.99"
-    }
-  }
+  "item_number": "",
+  "description": "",
+  "capacity": "",
+  "size": "",
+  "quantity": "",
+  "unit": "",
+  "full_description": ""
 }
 
-Important:
-- If a price for an attribute is not found in the document, omit the "price" field for that attribute
-- Always include the "value" field for each attribute
-- Extract prices exactly as they appear (with currency symbols and formatting)
-- Omit attributes you cannot confidently extract
+
+
+Objective
+Provide a complete, accurate, structured extraction suitable for programmatic use in pricing, BOQ generation or database ingestion.
 `;
 
-  const client = getOpenAIClient();
+  const client = getOpenAiClient();
   const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: config.openAiModel,
     messages: [
       {
         role: "system",
@@ -99,7 +104,7 @@ Important:
       },
     ],
     temperature: 0.1,
-    max_tokens: 4000, // Increased to handle large documents with many attributes
+    max_completion_tokens: 4000, // Increased to handle large documents with many attributes
   });
 
   const choice = response.choices?.[0];
@@ -108,14 +113,13 @@ Important:
 
   // Check if the response was truncated
   if (finishReason === 'length') {
-    throw new Error("The document is too large. OpenAI response was truncated. Please increase max_tokens or split the document.");
+    throw new Error("The document is too large. OpenAI response was truncated. Please increase max_completion_tokens or split the document.");
   }
 
   const parsed = await parseJsonFromMessage(rawMessage);
-  const attributes = toAttributeMap(parsed["attributes"]);
-  const totalPrice =
-    typeof parsed["totalPrice"] === "string" ? parsed["totalPrice"] : undefined;
+  const items = toItemsArray(parsed);
+  const attributes = structuredItemsToAttributeMap(items);
 
-  return { attributes, totalPrice };
+  return { attributes, items, totalPrice: undefined };
 }
 

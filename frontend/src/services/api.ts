@@ -1,4 +1,13 @@
-import type { BuildSummary, AttributeMap } from "../types";
+import type {
+  BuildSummary,
+  AttributeMap,
+  ExtractedItem,
+  BoqCompareResponse,
+  EstimateDraft,
+  EstimateDraftMeta,
+  DraftEstimateState,
+  EstimateStep,
+} from "../types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
@@ -50,6 +59,7 @@ export async function uploadMultipleEstimates(files: File[]): Promise<{ uploaded
 
 interface MatchPayload {
   file?: File;
+  files?: File[];
   buildId?: string;
   limit?: number;
 }
@@ -73,7 +83,9 @@ export interface AirweaveMatchResponse {
 
 export async function requestMatches(payload: MatchPayload): Promise<AirweaveMatchResponse> {
   const data = new FormData();
-  if (payload.file) {
+  if (payload.files && payload.files.length > 0) {
+    payload.files.forEach((file) => data.append("buildFiles", file));
+  } else if (payload.file) {
     data.append("buildFile", payload.file);
   }
   if (payload.buildId) {
@@ -81,6 +93,26 @@ export async function requestMatches(payload: MatchPayload): Promise<AirweaveMat
   }
   data.append("limit", String(payload.limit ?? 4));
   return safeFetch(`${API_BASE}/api/estimates/match`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export interface ExtractedFile {
+  fileName: string;
+  attributes: AttributeMap;
+  items: ExtractedItem[];
+  totalPrice?: string;
+}
+
+export interface ExtractResponse {
+  files: ExtractedFile[];
+}
+
+export async function extractEstimates(files: File[]): Promise<ExtractResponse> {
+  const data = new FormData();
+  files.forEach((file) => data.append("buildFiles", file));
+  return safeFetch(`${API_BASE}/api/estimates/extract`, {
     method: "POST",
     body: data,
   });
@@ -100,5 +132,63 @@ export async function createBuildFromTemplate(payload: CreateFromTemplatePayload
     },
     body: JSON.stringify(payload),
   });
+}
+
+export async function compareBoq(extractedItems: ExtractedItem[], boqFile: File): Promise<BoqCompareResponse> {
+  const data = new FormData();
+  data.append("boqFile", boqFile);
+  data.append("extractedItems", JSON.stringify(extractedItems ?? []));
+  return safeFetch(`${API_BASE}/api/estimates/compare-boq`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export async function extractBoq(boqFile: File): Promise<{ boqItems: ExtractedItem[]; rawContent?: string }> {
+  const data = new FormData();
+  data.append("boqFile", boqFile);
+  return safeFetch(`${API_BASE}/api/estimates/boq/extract`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export async function compareLists(drawingItems: ExtractedItem[], boqItems: ExtractedItem[]): Promise<BoqCompareResponse & { rawContent?: string }> {
+  return safeFetch(`${API_BASE}/api/estimates/compare-lists`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ drawingItems, boqItems }),
+  });
+}
+
+interface SaveDraftPayload {
+  id?: string;
+  name: string;
+  step: EstimateStep;
+  state: DraftEstimateState;
+}
+
+export async function saveDraft(payload: SaveDraftPayload): Promise<EstimateDraft> {
+  return safeFetch(`${API_BASE}/api/drafts`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listDrafts(): Promise<EstimateDraftMeta[]> {
+  return safeFetch(`${API_BASE}/api/drafts`);
+}
+
+export async function getDraft(id: string): Promise<EstimateDraft> {
+  return safeFetch(`${API_BASE}/api/drafts/${id}`);
+}
+
+export async function removeDraft(id: string): Promise<void> {
+  await fetch(`${API_BASE}/api/drafts/${id}`, { method: "DELETE" });
 }
 

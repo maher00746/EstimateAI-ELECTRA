@@ -5,6 +5,16 @@ export interface AttributeValue {
   price?: string;
 }
 
+export interface ExtractedItem {
+  item_number?: string;
+  description?: string;
+  capacity?: string;
+  size?: string;
+  quantity?: string;
+  unit?: string;
+  full_description?: string;
+}
+
 // Support both old format (string) and new format (object with value and price)
 export type AttributeMap = Record<string, string | AttributeValue>;
 

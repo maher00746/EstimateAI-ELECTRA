@@ -3,6 +3,7 @@ import path from "path";
 import cors from "cors";
 import { config } from "./config";
 import estimatesRouter from "./routes/estimates";
+import draftsRouter from "./routes/drafts";
 
 const app = express();
 
@@ -11,6 +12,7 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api/estimates", estimatesRouter);
+app.use("/api/drafts", draftsRouter);
 app.use("/files", express.static(path.resolve(config.staticDir)));
 
 app.use((req, res) => {

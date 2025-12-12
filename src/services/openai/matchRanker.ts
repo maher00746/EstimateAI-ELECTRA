@@ -69,7 +69,7 @@ ${candidateDescriptions}
         content: prompt,
       },
     ],
-    max_tokens: 800,
+    max_completion_tokens: 800,
   });
 
   const content = response.choices?.[0]?.message?.content ?? "";

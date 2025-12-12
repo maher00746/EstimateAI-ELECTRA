@@ -1,11 +1,12 @@
 import path from "path";
 import fs from "fs/promises";
 import { extractTextFromDocx, extractTextFromPdf, extractTextFromTxt } from "./textExtractor";
-import { AttributeMap } from "../../types/build";
+import { AttributeMap, ExtractedItem } from "../../types/build";
 import { extractAttributesWithOpenAI } from "./openaiExtractor";
 
 export async function parseDocument(filePath: string): Promise<{
   attributes: AttributeMap;
+  items: ExtractedItem[];
   totalPrice?: string;
 }> {
   const extension = path.extname(filePath).toLowerCase();
@@ -31,6 +32,7 @@ export async function parseDocument(filePath: string): Promise<{
 
   return {
     attributes: openAIResult.attributes,
+    items: openAIResult.items,
     totalPrice: openAIResult.totalPrice,
   };
 }

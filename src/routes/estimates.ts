@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Express } from "express";
 import multer from "multer";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -14,7 +15,10 @@ import {
   RankerCandidate,
   RankedMatch,
 } from "../services/openai/matchRanker";
-import { AttributeMap, AttributeValue } from "../types/build";
+import { AttributeMap, AttributeValue, ExtractedItem } from "../types/build";
+import { compareItemListsWithOpenAI, comparePreExtractedLists, extractBoqWithOpenAI } from "../services/openai/boqComparer";
+import { extractTextFromPdf, extractTextFromDocx, extractTextFromTxt } from "../services/parsing/textExtractor";
+import { parseBoqFile } from "../services/parsing/boqExtractor";
 
 interface CandidateSummary {
   id: string;
@@ -38,6 +42,11 @@ const upload = multer({
   storage,
   limits: { fileSize: config.maxFileSize },
 });
+
+const matchUpload = upload.fields([
+  { name: "buildFiles", maxCount: 10 },
+  { name: "buildFile", maxCount: 1 },
+]);
 
 const router = Router();
 
@@ -323,13 +332,54 @@ router.post("/upload-multiple", upload.array("buildFiles", 10), async (req, res,
   }
 });
 
-router.post("/match", upload.single("buildFile"), async (req, res, next) => {
+// Extract-only endpoint: parse files with OpenAI, return attributes, no DB or Airweave
+router.post("/extract", matchUpload, async (req, res, next) => {
+  try {
+    const fileFields = (req.files ?? {}) as Record<string, unknown>;
+    const multiFiles = Array.isArray((fileFields as any).buildFiles)
+      ? ((fileFields as any).buildFiles as Express.Multer.File[])
+      : [];
+    const singleFile = Array.isArray((fileFields as any).buildFile)
+      ? ((fileFields as any).buildFile as Express.Multer.File[])[0]
+      : (req as any).file as Express.Multer.File | undefined;
+
+    const files = multiFiles.length > 0 ? multiFiles : singleFile ? [singleFile] : [];
+    if (files.length === 0) {
+      return res.status(400).json({ message: "At least one buildFile is required" });
+    }
+
+    const parsedFiles = await Promise.all(
+      files.map(async (file) => {
+        const parsed = await parseDocument(file.path);
+        return {
+          fileName: file.originalname,
+          attributes: parsed.attributes,
+          items: parsed.items,
+          totalPrice: parsed.totalPrice,
+        };
+      })
+    );
+
+    res.status(200).json({ files: parsedFiles });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/match", matchUpload, async (req, res, next) => {
   try {
     const requestedLimit = Number(req.body.limit ?? 5);
     const limit = Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 5);
     let attributes: AttributeMap | undefined;
     let totalPrice: string | undefined;
     let referenceBuildId: string | undefined;
+    const fileFields = (req.files ?? {}) as Record<string, unknown>;
+    const multiFiles = Array.isArray((fileFields as any).buildFiles)
+      ? ((fileFields as any).buildFiles as Express.Multer.File[])
+      : [];
+    const singleFile = Array.isArray((fileFields as any).buildFile)
+      ? ((fileFields as any).buildFile as Express.Multer.File[])[0]
+      : (req as any).file as Express.Multer.File | undefined;
 
     if (req.body.buildId) {
       const existing = await findBuildById(req.body.buildId);
@@ -339,8 +389,23 @@ router.post("/match", upload.single("buildFile"), async (req, res, next) => {
       attributes = existing.attributes;
       totalPrice = existing.totalPrice;
       referenceBuildId = existing._id.toString();
-    } else if (req.file) {
-      const parsed = await parseDocument(req.file.path);
+    } else if (multiFiles.length > 0) {
+      const parsedFiles = await Promise.all(
+        multiFiles.map(async (file) => {
+          const parsed = await parseDocument(file.path);
+          return { file, parsed };
+        })
+      );
+      attributes = parsedFiles.reduce<AttributeMap>((acc, entry) => {
+        Object.entries(entry.parsed.attributes).forEach(([key, value]) => {
+          const label = `${path.basename(entry.file.originalname)} — ${key}`;
+          acc[label] = value;
+        });
+        return acc;
+      }, {});
+      totalPrice = parsedFiles.find((entry) => entry.parsed.totalPrice)?.parsed.totalPrice;
+    } else if (singleFile) {
+      const parsed = await parseDocument(singleFile.path);
       attributes = parsed.attributes;
       totalPrice = parsed.totalPrice;
     } else {
@@ -427,6 +492,43 @@ router.post("/match", upload.single("buildFile"), async (req, res, next) => {
       matches,
       completion: airweaveResponse.completion ?? null,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/compare-boq", upload.single("boqFile"), async (req, res, next) => {
+  try {
+    return res.status(400).json({ message: "Deprecated. Use /boq/extract then /compare-lists." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/boq/extract", upload.single("boqFile"), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "boqFile is required" });
+    }
+    const parsed = await parseBoqFile(req.file.path, req.file.originalname);
+    console.log("[boq/extract] Parsed items:", parsed.items.length);
+    res.status(200).json({ boqItems: parsed.items, rawContent: parsed.rawContent ?? "" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/compare-lists", async (req, res, next) => {
+  try {
+    const drawingItems = Array.isArray(req.body.drawingItems) ? req.body.drawingItems : [];
+    const boqItems = Array.isArray(req.body.boqItems) ? req.body.boqItems : [];
+
+    const { comparisons, rawContent } = await comparePreExtractedLists(
+      drawingItems as ExtractedItem[],
+      boqItems as ExtractedItem[]
+    );
+
+    res.status(200).json({ comparisons, rawContent });
   } catch (error) {
     next(error);
   }
