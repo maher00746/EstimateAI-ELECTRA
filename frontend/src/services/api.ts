@@ -243,6 +243,16 @@ export async function compareLists(drawingItems: ExtractedItem[], boqItems: Extr
   });
 }
 
+export async function enrichBoqItems(boqItems: ExtractedItem[]): Promise<{ items: ExtractedItem[]; rawContent?: string }> {
+  return safeFetch(`${API_BASE}/api/estimates/boq/enrich`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ boqItems }),
+  });
+}
+
 interface SaveDraftPayload {
   id?: string;
   name: string;

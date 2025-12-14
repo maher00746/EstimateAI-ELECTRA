@@ -17,8 +17,10 @@ import {
 } from "../services/openai/matchRanker";
 import { AttributeMap, AttributeValue, ExtractedItem } from "../types/build";
 import { compareItemListsWithOpenAI, comparePreExtractedLists, extractBoqWithOpenAI } from "../services/openai/boqComparer";
+import { enrichBoqItemsWithOpenAI } from "../services/openai/boqEnricher";
 import { extractTextFromPdf, extractTextFromDocx, extractTextFromTxt } from "../services/parsing/textExtractor";
 import { parseBoqFile } from "../services/parsing/boqExtractor";
+import { extractTextFromPdf, extractTextFromDocx, extractTextFromTxt } from "../services/parsing/textExtractor";
 import { loadPriceList } from "../services/pricing/priceList";
 import { loadAtgTotals } from "../services/pricing/atgSheet";
 import { loadElectricalTotals, calculateProjectCost } from "../services/pricing/electricalSheet";
@@ -596,8 +598,62 @@ router.post("/boq/extract", upload.single("boqFile"), async (req, res, next) => 
       return res.status(400).json({ message: "boqFile is required" });
     }
     const parsed = await parseBoqFile(req.file.path, req.file.originalname);
-    console.log("[boq/extract] Parsed items:", parsed.items.length);
-    res.status(200).json({ boqItems: parsed.items, rawContent: parsed.rawContent ?? "" });
+
+    // Always attempt OpenAI extraction here so "Review Extraction" gets BOQ results immediately
+    let aiItems: ExtractedItem[] = [];
+    let aiRaw = "";
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    try {
+      if (ext === ".pdf") {
+        const text = await extractTextFromPdf(req.file.path);
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text }));
+      } else if (ext === ".docx") {
+        const text = await extractTextFromDocx(req.file.path);
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text }));
+      } else if (ext === ".txt") {
+        const text = await extractTextFromTxt(req.file.path);
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text }));
+      } else if ([".png", ".jpg", ".jpeg"].includes(ext)) {
+        const buffer = await fs.readFile(req.file.path);
+        const imageBase64 = buffer.toString("base64");
+        const imageExt = ext.replace(".", "");
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ imageBase64, imageExt }));
+      } else {
+        // Fallback: if no structured parse and not a handled type, try text anyway
+        try {
+          const text = await fs.readFile(req.file.path, "utf-8");
+          ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text }));
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (err) {
+      console.error("[boq/extract] OpenAI BOQ extraction failed:", err);
+    }
+
+    const items = aiItems.length ? aiItems : parsed.items;
+    console.log("[boq/extract] Parsed items:", parsed.items.length, "| AI items:", aiItems.length);
+    if (aiRaw) console.log("[boq/extract] AI raw preview:", aiRaw.slice(0, 500));
+
+    res.status(200).json({ boqItems: items, rawContent: aiRaw || parsed.rawContent || "" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/boq/enrich", async (req, res, next) => {
+  try {
+    const boqItems = Array.isArray(req.body.boqItems) ? (req.body.boqItems as ExtractedItem[]) : [];
+    if (!boqItems.length) {
+      return res.status(400).json({ message: "boqItems array is required" });
+    }
+
+    const { items, rawContent } = await enrichBoqItemsWithOpenAI(boqItems);
+    console.log("[boq/enrich] enriched items count:", items.length);
+    if (rawContent) {
+      console.log("[boq/enrich] OpenAI response preview:", rawContent.slice(0, 500));
+    }
+    res.status(200).json({ items, rawContent });
   } catch (error) {
     next(error);
   }

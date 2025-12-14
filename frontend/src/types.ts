@@ -3,7 +3,7 @@ export interface AttributeValue {
   price?: string;
 }
 
-export type EstimateStep = "upload" | "review" | "compare" | "finalize" | "pricing";
+export type EstimateStep = "upload" | "review" | "compare" | "finalize" | "pricing" | "estimate";
 
 export interface ExtractedItem {
   item_number?: string;

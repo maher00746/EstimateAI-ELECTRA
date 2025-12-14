@@ -27,6 +27,7 @@ import {
   createBuildFromTemplate,
   extractBoq,
   compareLists,
+  enrichBoqItems,
   listDrafts,
   saveDraft,
   getDraft,
@@ -39,13 +40,17 @@ import {
 import { useAuth } from "./contexts/AuthContext";
 
 const ITEMS_PER_PAGE = 10;
+const COMPANY_LOGO_URL = "/company.png";
+const COMPANY_NAME = "Nesma & Partners";
+const CONTACT_NAME = "Abdel Rahman Thalji";
 
 const ESTIMATE_STEPS: Array<{ id: EstimateStep; label: string; description: string }> = [
   { id: "upload", label: "Upload", description: "Drawings & BOQ" },
   { id: "review", label: "Review", description: "Validate extraction" },
   { id: "compare", label: "Compare", description: "BOQ vs drawings" },
-  { id: "finalize", label: "Finalize", description: "Prep for pricing" },
+  { id: "finalize", label: "Prepare", description: "Prep for pricing" },
   { id: "pricing", label: "Pricing", description: "Review prices" },
+  { id: "estimate", label: "Finalize", description: "Assemble estimate" },
 ];
 
 const STEP_ORDER: Record<EstimateStep, number> = {
@@ -54,6 +59,7 @@ const STEP_ORDER: Record<EstimateStep, number> = {
   compare: 2,
   finalize: 3,
   pricing: 4,
+  estimate: 5,
 };
 
 type AppPage = "knowledge" | "new-estimate" | "drafts";
@@ -68,9 +74,9 @@ const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
 
 const ELECTRICAL_INPUT_DEFAULTS: Array<{ key: string; label: string; value: number }> = [
   { key: "a2", label: "Tanks total quantity (A2)", value: 0 },
-  { key: "x", label: "X", value: 30 },
-  { key: "y", label: "Y", value: 100 },
-  { key: "z", label: "Z", value: 100 },
+  { key: "x", label: "Between Storage Tank and Control Panel", value: 30 },
+  { key: "y", label: "Between Day tank and Control Panel", value: 100 },
+  { key: "z", label: "Between Filling Point and Control Panel", value: 100 },
   { key: "c5", label: "Single Submersible Pump", value: 1 },
   { key: "c6", label: "Duplex Gear Pump", value: 0 },
   { key: "c7", label: "Magnetic Float Switch (Storage Tank)", value: 1 },
@@ -132,12 +138,22 @@ function renderCell(value: string | undefined) {
   return <span className="cell-text" title={text}>{text}</span>;
 }
 
+function matchesDescription(item: Pick<ExtractedItem, "description" | "full_description">, query: string) {
+  const search = query.trim().toLowerCase();
+  if (!search) return true;
+  return `${item.description || ""} ${item.full_description || ""}`.toLowerCase().includes(search);
+}
+
 function buildFinalizeEntry<S extends ItemSource>(item: ExtractedItem, source: S, fallback?: ExtractedItem): { item: ExtractedItem; source: S } {
+  if (source === "boq") {
+    return { item: { ...item }, source };
+  }
   const normalizedSize = item.size ?? fallback?.size;
-  return {
-    item: normalizedSize ? { ...item, size: normalizedSize } : { ...item },
-    source,
-  };
+  const normalizedCapacity = item.capacity ?? fallback?.capacity;
+  const normalizedItem: ExtractedItem = { ...item };
+  if (normalizedSize) normalizedItem.size = normalizedSize;
+  if (normalizedCapacity) normalizedItem.capacity = normalizedCapacity;
+  return { item: normalizedItem, source };
 }
 
 type ColumnResizeApi = {
@@ -584,12 +600,14 @@ function EditableItemsTable({
   items,
   onChange,
   title,
-  onAddRow
+  searchQuery,
+  onSearchChange,
 }: {
   items: Array<{ item: ExtractedItem; source: ItemSource }>;
   onChange: (next: Array<{ item: ExtractedItem; source: ItemSource }>) => void;
   title: string;
-  onAddRow: () => void;
+  searchQuery: string;
+  onSearchChange: (value: string) => void;
 }) {
   const handleChange = (idx: number, field: keyof ExtractedItem, value: string) => {
     const next = [...items];
@@ -597,10 +615,27 @@ function EditableItemsTable({
     onChange(next);
   };
 
+  const filteredItems = useMemo(
+    () =>
+      items
+        .map((item, idx) => ({ item, idx }))
+        .filter(({ item }) => matchesDescription(item.item, searchQuery)),
+    [items, searchQuery]
+  );
+
   return (
     <div className="table-wrapper">
-      <div className="panel__header" style={{ marginBottom: "0.5rem" }}>
+      <div className="panel__header" style={{ marginBottom: "0.5rem", alignItems: "flex-end", gap: "0.75rem" }}>
         {title && <p className="eyebrow">{title}</p>}
+        <div style={{ marginLeft: "auto" }}>
+          <input
+            className="form-input form-input--table"
+            placeholder="Search description…"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            style={{ width: "240px" }}
+          />
+        </div>
       </div>
       <table className="matches-table resizable-table finalize-table">
         <thead>
@@ -614,7 +649,7 @@ function EditableItemsTable({
           </tr>
         </thead>
         <tbody>
-          {items.map((item, idx) => (
+          {filteredItems.length ? filteredItems.map(({ item, idx }) => (
             <tr key={`finalize-${idx}`} className="matches-table__row">
               <td className="finalize-col finalize-col--description">
                 <textarea
@@ -666,14 +701,15 @@ function EditableItemsTable({
                 />
               </td>
             </tr>
-          ))}
+          )) : (
+            <tr>
+              <td colSpan={6} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                No items match this description search.
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
-      <div className="table-actions" style={{ justifyContent: "flex-start" }}>
-        <button type="button" className="btn-secondary" onClick={onAddRow}>
-          + Add row
-        </button>
-      </div>
     </div>
   );
 }
@@ -719,13 +755,18 @@ function App() {
   const [boqResults, setBoqResults] = useState<{ boqItems: ExtractedItem[]; comparisons: BoqComparisonRow[] }>({ boqItems: [], comparisons: [] });
   const [boqExtractLoading, setBoqExtractLoading] = useState(false);
   const [boqCompareLoading, setBoqCompareLoading] = useState(false);
+  const [boqEnrichLoading, setBoqEnrichLoading] = useState(false);
   const [selectedBoqFileName, setSelectedBoqFileName] = useState<string>("");
   const [pendingBoqFile, setPendingBoqFile] = useState<File | null>(null);
   const [reviewStepActive, setReviewStepActive] = useState(false);
   const [finalizeItems, setFinalizeItems] = useState<Array<{ item: ExtractedItem; source: ItemSource }>>([]);
+  const [drawingSearch, setDrawingSearch] = useState("");
+  const [boqSearch, setBoqSearch] = useState("");
+  const [finalizeSearch, setFinalizeSearch] = useState("");
   const [comparisonSelections, setComparisonSelections] = useState<Record<number, "drawing" | "boq" | "">>({});
   const [comparisonChecked, setComparisonChecked] = useState<Record<number, boolean>>({});
   const [pricingSelections, setPricingSelections] = useState<Array<{ source: ItemSource; item: ExtractedItem }>>([]);
+  const [pricingSearch, setPricingSearch] = useState("");
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingStatus, setPricingStatus] = useState<string>("");
   const [pricingMatchOptions, setPricingMatchOptions] = useState<Record<number, PriceMapping[]>>({});
@@ -741,6 +782,10 @@ function App() {
   const [priceListLoading, setPriceListLoading] = useState(false);
   const [priceListError, setPriceListError] = useState("");
   const [priceListSearch, setPriceListSearch] = useState<Record<number, string>>({});
+  const filteredPricingSelections = useMemo(
+    () => pricingSelections.map((sel, idx) => ({ sel, idx })).filter(({ sel }) => matchesDescription(sel.item, pricingSearch)),
+    [pricingSelections, pricingSearch]
+  );
   const [atgRow, setAtgRow] = useState<{
     description: string;
     qty: string;
@@ -771,6 +816,13 @@ function App() {
     supervisors: "0",
     location: "riyadh",
   });
+  const [minSellingPrice, setMinSellingPrice] = useState("500000");
+  const [estimateDiscountPct, setEstimateDiscountPct] = useState("0");
+  const [estimateCompanyName, setEstimateCompanyName] = useState(COMPANY_NAME);
+  const [estimateContactName, setEstimateContactName] = useState(CONTACT_NAME);
+  const [estimateProjectName, setEstimateProjectName] = useState("");
+  const [estimateSubject, setEstimateSubject] = useState("");
+  const [showDrawingsOnlyConfirm, setShowDrawingsOnlyConfirm] = useState(false);
 
   const getMatchLabel = useCallback((match?: PriceMapping) => {
     if (!match) return "Select price";
@@ -856,8 +908,9 @@ function App() {
     setPricingSelections(prev => {
       const next = [...prev];
       if (!next[rowIdx]) return prev;
-      const nextUnitPrice =
+      const nextUnitPriceRaw =
         mapping.unit_price !== undefined ? String(mapping.unit_price) : rowPrice ?? next[rowIdx].item.unit_price;
+      const nextUnitPrice = roundPrice(nextUnitPriceRaw);
       const nextUnitMh =
         mapping.unit_manhour !== undefined ? String(mapping.unit_manhour) : rowMh ?? next[rowIdx].item.unit_manhour;
       const quantity = next[rowIdx].item.quantity;
@@ -915,6 +968,7 @@ function App() {
   const kbResize = useColumnResize();
   const comparisonResize = useColumnResize();
   const pricingResize = useColumnResize();
+  const estimateResize = useColumnResize();
   const [activePricingSection, setActivePricingSection] = useState<PricingAccordionId | null>("items");
   const compareMessages = [
     "Reading BOQ…",
@@ -1123,11 +1177,7 @@ function App() {
   };
 
   const loadingMessages = [
-    "Uploading files…",
-    "Reading documents…",
-    "Extracting specifications with AI…",
-    "Structuring results…",
-    "Preparing preview…"
+    "AI is Extracting the Attributes..."
   ];
 
   const resetEstimateFlow = useCallback(() => {
@@ -1162,6 +1212,7 @@ function App() {
     setFeedback("");
     setDraftId(null);
     setDraftName("");
+    setSelectedDraftId(null);
     setDraftStatus("idle");
     setLastDraftSavedAt(null);
     setInstallationInputs({
@@ -1216,7 +1267,7 @@ function App() {
       if (state.electricalInputs) {
         setElectricalInputs(state.electricalInputs);
       }
-      if (state.installationInputs) {
+      if (hydratingDraftRef.current && state.installationInputs) {
         setInstallationInputs(state.installationInputs);
       }
       const defaultDrawingSelection: Record<string, boolean> = {};
@@ -1259,102 +1310,6 @@ function App() {
     }
   };
 
-  const handleExtract = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!matchingFiles.length && !pendingBoqFile) {
-      setFeedback("Upload drawings or BOQ to start a review.");
-      setTimeout(() => setFeedback(""), 3000);
-      return;
-    }
-    const hasDrawings = matchingFiles.length > 0;
-    const hasBoq = !!pendingBoqFile;
-    setMatching(hasDrawings);
-    setProcessingAI(hasDrawings);
-    setReviewStepActive(false);
-    setActiveEstimateStep("upload");
-    setFeedback("");
-    if (hasDrawings) {
-      setExtractedFiles([]);
-      setLoadingStage(0);
-    }
-    setSelectedDrawingRows({});
-    setSelectedBoqRows({});
-
-    let stageInterval: ReturnType<typeof setInterval> | null = null;
-    if (hasDrawings) {
-      stageInterval = setInterval(() => {
-        setLoadingStage(prev => {
-          const next = prev + 1;
-          return next < loadingMessages.length ? next : prev;
-        });
-      }, 1500);
-    }
-
-    try {
-      let drawingsSucceeded = false;
-      if (hasDrawings) {
-        const payload = await extractEstimates(matchingFiles);
-        if (stageInterval) clearInterval(stageInterval);
-        const files = payload.files ?? [];
-        setExtractedFiles(files);
-        const drawingSelection: Record<string, boolean> = {};
-        files.forEach((file, fileIdx) =>
-          (file.items || []).forEach((_, itemIdx) => {
-            drawingSelection[`d-${fileIdx}-${itemIdx}`] = true;
-          })
-        );
-        setSelectedDrawingRows(drawingSelection);
-        setMatchingFiles([]);
-        drawingsSucceeded = !!(payload.files && payload.files.length > 0);
-        const message = drawingsSucceeded ? "Drawings extracted." : "No drawing items returned.";
-        setFeedback(message);
-        setTimeout(() => setFeedback(""), 3000);
-      }
-
-      let boqSucceeded = false;
-      if (hasBoq && pendingBoqFile) {
-        setBoqExtractLoading(true);
-        try {
-          const extractResp = await extractBoq(pendingBoqFile);
-          const boqItems = extractResp.boqItems || [];
-          setBoqResults({ boqItems, comparisons: [] });
-          const boqSelection: Record<string, boolean> = {};
-          boqItems.forEach((_, idx) => {
-            boqSelection[`b-${idx}`] = true;
-          });
-          setSelectedBoqRows(boqSelection);
-          boqSucceeded = !!(extractResp.boqItems && extractResp.boqItems.length > 0);
-          const msg = boqSucceeded ? "BOQ extracted." : "No BOQ items were parsed from this file.";
-          setFeedback(msg);
-          setTimeout(() => setFeedback(""), 3000);
-        } catch (error) {
-          setFeedback((error as Error).message);
-          setTimeout(() => setFeedback(""), 5000);
-        } finally {
-          setBoqExtractLoading(false);
-          setPendingBoqFile(null);
-        }
-      }
-
-      if (drawingsSucceeded || boqSucceeded) {
-        setReviewStepActive(true);
-        setActiveEstimateStep("review");
-      }
-    } catch (error) {
-      if (stageInterval) clearInterval(stageInterval);
-      const errorMessage = (error as Error).message;
-      setFeedback(errorMessage);
-      setTimeout(() => setFeedback(""), 5000);
-      if (hasDrawings) {
-        setExtractedFiles([]);
-      }
-    } finally {
-      if (stageInterval) clearInterval(stageInterval);
-      setMatching(false);
-      setProcessingAI(false);
-      setLoadingStage(0);
-    }
-  };
 
   const handleRowClick = (linkToFile: string) => {
     window.open(linkToFile, "_blank");
@@ -1395,10 +1350,12 @@ function App() {
         : activePage === "new-estimate" && activeEstimateStep === "compare"
           ? "Select the Items to include in the Estimate"
           : activePage === "new-estimate" && activeEstimateStep === "finalize"
-            ? "Finalize the items before moving to Pricing"
+            ? "Prepare the items before moving to Pricing"
             : activePage === "new-estimate" && activeEstimateStep === "pricing"
               ? "Finalize the Pricing for Items, Electrical, ATG and Installation"
-              : "Upload Drawings and BOQ to start the Estimation";
+              : activePage === "new-estimate" && activeEstimateStep === "estimate"
+                ? "Finalize the consolidated estimate"
+                : "Upload Drawings and BOQ to start the Estimation";
 
   const handleBoqFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1406,8 +1363,6 @@ function App() {
 
     setPendingBoqFile(file);
     setSelectedBoqFileName(file.name);
-    setFeedback("BOQ file ready for extraction.");
-    setTimeout(() => setFeedback(""), 2500);
   };
 
   const getComparisonClass = (status: string) => {
@@ -1447,40 +1402,66 @@ function App() {
     [boqResults]
   );
 
+  const filteredDrawingReviewRows = useMemo(
+    () => drawingReviewRows.filter(({ item }) => matchesDescription(item, drawingSearch)),
+    [drawingReviewRows, drawingSearch]
+  );
+
+  const filteredBoqReviewRows = useMemo(
+    () => boqReviewRows.filter(({ item }) => matchesDescription(item, boqSearch)),
+    [boqReviewRows, boqSearch]
+  );
+
   const drawingSelectedCount = useMemo(
-    () => drawingReviewRows.reduce((count, row) => count + (selectedDrawingRows[row.key] ? 1 : 0), 0),
-    [drawingReviewRows, selectedDrawingRows]
+    () => filteredDrawingReviewRows.reduce((count, row) => count + (selectedDrawingRows[row.key] ? 1 : 0), 0),
+    [filteredDrawingReviewRows, selectedDrawingRows]
   );
 
   const boqSelectedCount = useMemo(
-    () => boqReviewRows.reduce((count, row) => count + (selectedBoqRows[row.key] ? 1 : 0), 0),
-    [boqReviewRows, selectedBoqRows]
+    () => filteredBoqReviewRows.reduce((count, row) => count + (selectedBoqRows[row.key] ? 1 : 0), 0),
+    [filteredBoqReviewRows, selectedBoqRows]
   );
 
   const setAllDrawingSelection = useCallback(
     (checked: boolean) => {
-      const next: Record<string, boolean> = {};
-      drawingReviewRows.forEach(row => {
-        next[row.key] = checked;
+      setSelectedDrawingRows(prev => {
+        const next = { ...prev };
+        filteredDrawingReviewRows.forEach(row => {
+          next[row.key] = checked;
+        });
+        return next;
       });
-      setSelectedDrawingRows(next);
     },
-    [drawingReviewRows]
+    [filteredDrawingReviewRows]
   );
 
   const setAllBoqSelection = useCallback(
     (checked: boolean) => {
-      const next: Record<string, boolean> = {};
-      boqReviewRows.forEach(row => {
-        next[row.key] = checked;
+      setSelectedBoqRows(prev => {
+        const next = { ...prev };
+        filteredBoqReviewRows.forEach(row => {
+          next[row.key] = checked;
+        });
+        return next;
       });
-      setSelectedBoqRows(next);
     },
-    [boqReviewRows]
+    [filteredBoqReviewRows]
   );
 
   const hasDrawingData = drawingReviewRows.length > 0;
   const hasBoqData = boqReviewRows.length > 0;
+
+  const buildBoqSelection = useCallback(
+    (items: ExtractedItem[]) => {
+      const rows = items.map((item, itemIdx) => ({
+        item,
+        key: buildBoqRowKey(itemIdx),
+      }));
+      const picked = rows.filter(row => selectedBoqRows[row.key]).map(row => row.item);
+      return picked.length ? picked : items;
+    },
+    [selectedBoqRows]
+  );
 
   const getSelectedDrawingItems = useCallback(
     () => {
@@ -1491,12 +1472,167 @@ function App() {
   );
 
   const getSelectedBoqItems = useCallback(
-    () => {
-      const picked = boqReviewRows.filter(row => selectedBoqRows[row.key]).map(row => row.item);
-      return picked.length ? picked : boqReviewRows.map(row => row.item);
+    (itemsOverride?: ExtractedItem[]) => {
+      const items = itemsOverride ?? boqResults.boqItems ?? [];
+      return buildBoqSelection(items);
     },
-    [boqReviewRows, selectedBoqRows]
+    [boqResults.boqItems, buildBoqSelection]
   );
+
+  const enrichBoqSizeAndCapacity = useCallback(async (itemsArg?: ExtractedItem[]): Promise<ExtractedItem[]> => {
+    const items = itemsArg ?? boqResults.boqItems ?? [];
+    const needsEnrichment = items.some(item => {
+      const hasSize = !!item.size && item.size.trim().length > 0;
+      const hasCapacity = !!item.capacity && item.capacity.trim().length > 0;
+      return !hasSize || !hasCapacity;
+    });
+    if (!needsEnrichment) return items;
+
+    setBoqEnrichLoading(true);
+    try {
+      const resp = await enrichBoqItems(items);
+      console.log("[boq-enrich] client received items:", resp.items?.length, "raw:", resp.rawContent?.slice?.(0, 200));
+      if (resp.items?.length) {
+        setBoqResults(prev => ({ ...prev, boqItems: resp.items, comparisons: [] }));
+        setComparisonSelections({});
+        setComparisonChecked({});
+        // Ensure table shows enriched rows immediately
+        const selection: Record<string, boolean> = {};
+        resp.items.forEach((_, idx) => {
+          selection[`b-${idx}`] = true;
+        });
+        setSelectedBoqRows(selection);
+        return resp.items;
+      }
+    } catch (error) {
+      setFeedback((error as Error).message || "Failed to enrich BOQ items.");
+      setTimeout(() => setFeedback(""), 4000);
+    } finally {
+      setBoqEnrichLoading(false);
+    }
+    return items;
+  }, [boqResults.boqItems]);
+
+  const runExtract = useCallback(
+    async (hasDrawings: boolean, hasBoq: boolean) => {
+      setMatching(hasDrawings);
+      setProcessingAI(hasDrawings);
+      setReviewStepActive(false);
+      setActiveEstimateStep("upload");
+      setFeedback("");
+      if (hasDrawings) {
+        setExtractedFiles([]);
+        setLoadingStage(0);
+      }
+      setSelectedDrawingRows({});
+      setSelectedBoqRows({});
+
+      let stageInterval: ReturnType<typeof setInterval> | null = null;
+      if (hasDrawings) {
+        stageInterval = setInterval(() => {
+          setLoadingStage(prev => {
+            const next = prev + 1;
+            return next < loadingMessages.length ? next : prev;
+          });
+        }, 1500);
+      }
+
+      try {
+        let drawingsSucceeded = false;
+        if (hasDrawings) {
+          const payload = await extractEstimates(matchingFiles);
+          if (stageInterval) clearInterval(stageInterval);
+          const files = payload.files ?? [];
+          setExtractedFiles(files);
+          const drawingSelection: Record<string, boolean> = {};
+          files.forEach((file, fileIdx) =>
+            (file.items || []).forEach((_, itemIdx) => {
+              drawingSelection[`d-${fileIdx}-${itemIdx}`] = true;
+            })
+          );
+          setSelectedDrawingRows(drawingSelection);
+          setMatchingFiles([]);
+          drawingsSucceeded = !!(payload.files && payload.files.length > 0);
+          const message = drawingsSucceeded ? "Drawings extracted." : "No drawing items returned.";
+          setFeedback(message);
+          setTimeout(() => setFeedback(""), 3000);
+        }
+
+        let boqSucceeded = false;
+        if (hasBoq && pendingBoqFile) {
+          setBoqExtractLoading(true);
+          try {
+            const extractResp = await extractBoq(pendingBoqFile);
+            let boqItems = extractResp.boqItems || [];
+            boqItems = await enrichBoqSizeAndCapacity(boqItems);
+            setBoqResults({ boqItems, comparisons: [] });
+            const boqSelection: Record<string, boolean> = {};
+            boqItems.forEach((_, idx) => {
+              boqSelection[`b-${idx}`] = true;
+            });
+            setSelectedBoqRows(boqSelection);
+            boqSucceeded = !!(boqItems && boqItems.length > 0);
+            const msg = boqSucceeded ? "BOQ extracted." : "No BOQ items were parsed from this file.";
+            setFeedback(msg);
+            setTimeout(() => setFeedback(""), 3000);
+          } catch (error) {
+            setFeedback((error as Error).message);
+            setTimeout(() => setFeedback(""), 5000);
+          } finally {
+            setBoqExtractLoading(false);
+            setPendingBoqFile(null);
+          }
+        }
+
+        if (drawingsSucceeded || boqSucceeded) {
+          setReviewStepActive(true);
+          setActiveEstimateStep("review");
+        }
+      } catch (error) {
+        if (stageInterval) clearInterval(stageInterval);
+        const errorMessage = (error as Error).message;
+        setFeedback(errorMessage);
+        setTimeout(() => setFeedback(""), 5000);
+        if (hasDrawings) {
+          setExtractedFiles([]);
+        }
+      } finally {
+        if (stageInterval) clearInterval(stageInterval);
+        setMatching(false);
+        setProcessingAI(false);
+        setLoadingStage(0);
+      }
+    },
+    [enrichBoqSizeAndCapacity, loadingMessages.length, matchingFiles, pendingBoqFile]
+  );
+
+  const handleExtract = async (event: React.FormEvent, skipConfirm?: boolean) => {
+    event.preventDefault();
+    const hasDrawings = matchingFiles.length > 0;
+    const hasBoq = !!pendingBoqFile;
+
+    if (!hasDrawings && !hasBoq) {
+      setFeedback("Upload drawings or BOQ to start a review.");
+      setTimeout(() => setFeedback(""), 3000);
+      return;
+    }
+
+    if (hasDrawings && !hasBoq && !skipConfirm) {
+      setShowDrawingsOnlyConfirm(true);
+      return;
+    }
+
+    await runExtract(hasDrawings, hasBoq);
+  };
+
+  const handleConfirmDrawingsOnly = useCallback(async () => {
+    setShowDrawingsOnlyConfirm(false);
+    await runExtract(true, false);
+  }, [runExtract]);
+
+  const handleCancelDrawingsOnly = useCallback(() => {
+    setShowDrawingsOnlyConfirm(false);
+  }, []);
 
   const updateDrawingItemField = useCallback(
     (fileIdx: number, itemIdx: number, field: keyof ExtractedItem, value: string) => {
@@ -1530,6 +1666,7 @@ function App() {
     },
     []
   );
+
 
   const hasAnyComparisonChecked = useMemo(
     () => boqResults.comparisons.some((_, idx) => comparisonChecked[idx]),
@@ -1565,6 +1702,8 @@ function App() {
         return finalizeItems.length > 0 || activeEstimateStep === "finalize";
       case "pricing":
         return pricingSelections.length > 0 || finalizeItems.length > 0 || activeEstimateStep === "pricing";
+      case "estimate":
+        return pricingSelections.length > 0 || finalizeItems.length > 0 || activeEstimateStep === "estimate";
       default:
         return false;
     }
@@ -1575,6 +1714,13 @@ function App() {
     const price = Number(unitPrice ?? "0");
     if (!Number.isFinite(qty) || !Number.isFinite(price)) return "";
     return (price * qty).toFixed(2);
+  };
+
+  const roundPrice = (value: string | number | undefined) => {
+    if (value === undefined || value === null) return "";
+    const num = Number(typeof value === "string" ? value.replace(/,/g, "") : value);
+    if (!Number.isFinite(num)) return value.toString();
+    return num.toFixed(2);
   };
 
   const computeTotalValue = (unitValue: string | number | undefined, quantity: string | undefined) => {
@@ -1657,6 +1803,7 @@ function App() {
     };
   }, [installationInputs, totalManhour]);
   const isRemoteLocation = installationInputs.location === "remote";
+  const installationUnitPriceNumber = isRemoteLocation ? installationTotals.priceRemote : installationTotals.priceRiyadh;
   const installationFieldStyle: React.CSSProperties = {
     flex: "1 1 200px",
     minWidth: "180px",
@@ -1664,6 +1811,457 @@ function App() {
     flexDirection: "column",
     gap: "0.25rem",
   };
+
+  const pricingTotalsSum = useMemo(() => {
+    const itemsTotal = pricingSelections.reduce((sum, entry) => {
+      const computedTotal = computeTotalPrice(entry.item.unit_price, entry.item.quantity);
+      const totalPrice = entry.item.total_price ?? computedTotal;
+      return sum + parseNumeric(totalPrice);
+    }, 0);
+    const electricalTotal = parseNumeric(
+      electricalRow.totalPrice || computeTotalPrice(electricalRow.unitPrice, electricalRow.qty)
+    );
+    const atgTotal = parseNumeric(atgRow.totalPrice || computeTotalPrice(atgRow.unitPrice, atgRow.qty));
+    const installationTotal = parseNumeric(computeTotalPrice(installationUnitPriceNumber, "1"));
+    return itemsTotal + electricalTotal + atgTotal + installationTotal;
+  }, [
+    pricingSelections,
+    electricalRow.totalPrice,
+    electricalRow.unitPrice,
+    electricalRow.qty,
+    atgRow.totalPrice,
+    atgRow.unitPrice,
+    atgRow.qty,
+    installationUnitPriceNumber,
+  ]);
+
+  const minSellingPriceNumber = parseNumeric(minSellingPrice);
+  const minSellingPriceColor =
+    minSellingPrice.trim() === ""
+      ? undefined
+      : pricingTotalsSum >= minSellingPriceNumber
+        ? "#1b9e3e"
+        : "#d93025";
+
+  const estimateTableRows = useMemo(() => {
+    const rows: Array<{
+      description?: string;
+      capacity?: string;
+      size?: string;
+      quantity?: string;
+      unit?: string;
+      remarks?: string;
+      unitPrice?: string;
+      totalPrice?: string;
+    }> = [];
+
+    const normalizeValue = (value: string | number | undefined) => {
+      if (value === undefined || value === null) return "";
+      return typeof value === "number" ? value.toString() : value;
+    };
+
+    pricingSelections.forEach((sel) => {
+      rows.push({
+        description: sel.item.description || sel.item.full_description || sel.item.item_type,
+        capacity: normalizeValue(sel.item.capacity),
+        size: normalizeValue(sel.item.size),
+        quantity: normalizeValue(sel.item.quantity),
+        unit: normalizeValue(sel.item.unit),
+        remarks: normalizeValue(sel.item.remarks),
+        unitPrice: normalizeValue(sel.item.unit_price),
+        totalPrice: normalizeValue(sel.item.total_price),
+      });
+    });
+
+    const electricalAmount = parseNumeric(electricalRow.totalPrice || electricalRow.unitPrice);
+    if (electricalAmount > 0) {
+      rows.push({
+        description: electricalRow.description,
+        capacity: "",
+        size: "",
+        quantity: electricalRow.qty,
+        unit: electricalRow.unit,
+        remarks: "",
+        unitPrice: electricalRow.unitPrice,
+        totalPrice: electricalRow.totalPrice,
+      });
+    }
+
+    const atgAmount = parseNumeric(atgRow.totalPrice || atgRow.unitPrice);
+    if (atgAmount > 0) {
+      rows.push({
+        description: atgRow.description,
+        capacity: "",
+        size: "",
+        quantity: atgRow.qty,
+        unit: atgRow.unit,
+        remarks: "",
+        unitPrice: atgRow.unitPrice,
+        totalPrice: atgRow.totalPrice,
+      });
+    }
+
+    const installationUnitPrice = Number.isFinite(installationUnitPriceNumber)
+      ? Number(installationUnitPriceNumber).toFixed(2)
+      : "";
+    const installationTotalPrice = computeTotalPrice(installationUnitPriceNumber, "1");
+    const installationAmount = parseNumeric(installationTotalPrice || installationUnitPrice);
+
+    if (installationAmount > 0) {
+      rows.push({
+        description: "Installation, T&C",
+        capacity: "",
+        size: "",
+        quantity: "1",
+        unit: "Lot",
+        remarks: "",
+        unitPrice: installationUnitPrice,
+        totalPrice: installationTotalPrice,
+      });
+    }
+
+    return rows.filter((row) =>
+      Object.values(row).some((value) => (value ?? "").toString().trim().length > 0)
+    );
+  }, [pricingSelections, electricalRow, atgRow, installationUnitPriceNumber]);
+
+  const estimateTotals = useMemo(() => {
+    const subtotal = estimateTableRows.reduce((sum, row) => {
+      return sum + parseNumeric(row.totalPrice);
+    }, 0);
+    const discountPct = Math.max(0, parseNumeric(estimateDiscountPct));
+    const discount = subtotal * (discountPct / 100);
+    const afterDiscount = subtotal - discount;
+    const vat = afterDiscount * 0.15;
+    const totalWithVat = afterDiscount + vat;
+    return {
+      subtotal,
+      discountPct,
+      discount,
+      afterDiscount,
+      vat,
+      totalWithVat,
+    };
+  }, [estimateTableRows, estimateDiscountPct]);
+
+  const estimateInputStyle: React.CSSProperties = { height: "2.6rem" };
+  const estimateInputPaddedStyle: React.CSSProperties = { ...estimateInputStyle, padding: "0.6rem 0.9rem" };
+
+  const fetchLogoDataUrl = useCallback(async (): Promise<string> => {
+    const candidates = [
+      COMPANY_LOGO_URL,
+      `${window.location.origin}${COMPANY_LOGO_URL}`,
+      "/data/company.png",
+      `${window.location.origin}/data/company.png`,
+      "/company.png",
+      `${window.location.origin}/company.png`,
+    ];
+    for (const url of candidates) {
+      try {
+        const response = await fetch(url, { cache: "no-cache" });
+        if (!response.ok) continue;
+        const blob = await response.blob();
+        if (!blob.size) continue;
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : "");
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        if (dataUrl) return dataUrl;
+      } catch {
+        continue;
+      }
+    }
+    return "";
+  }, []);
+
+  const handleGenerateEstimatePdf = useCallback(async () => {
+    const quotationDate = new Date();
+    const expirationDate = new Date();
+    expirationDate.setDate(quotationDate.getDate() + 30);
+
+    const formatDate = (date: Date) =>
+      date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+
+    const tableRowsHtml = estimateTableRows
+      .map((row, idx) => {
+        return `
+          <tr>
+            <td>${idx + 1}</td>
+            <td>${row.description || "—"}</td>
+            <td>${row.capacity || "—"}</td>
+            <td>${row.size || "—"}</td>
+            <td>${row.quantity || "—"}</td>
+            <td>${row.unit || "—"}</td>
+            <td>${row.remarks || "—"}</td>
+            <td>${row.unitPrice || "—"}</td>
+            <td>${row.totalPrice || "—"}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const summaryRowsHtml = `
+      <tr class="summary-row">
+        <td></td>
+        <td class="summary-label">Untaxed Amount</td>
+        <td colspan="5"></td>
+        <td></td>
+        <td class="summary-value"><strong>${formatNumber(estimateTotals.afterDiscount)}</strong></td>
+      </tr>
+      <tr class="summary-row">
+        <td></td>
+        <td class="summary-label">Tax 15%</td>
+        <td colspan="5"></td>
+        <td></td>
+        <td class="summary-value"><strong>${formatNumber(estimateTotals.vat)}</strong></td>
+      </tr>
+      <tr class="summary-row">
+        <td></td>
+        <td class="summary-label">Total</td>
+        <td colspan="5"></td>
+        <td></td>
+        <td class="summary-value"><strong>${formatNumber(estimateTotals.totalWithVat)}</strong></td>
+      </tr>
+    `;
+
+    const companyNameForPrint = estimateCompanyName || COMPANY_NAME;
+    const contactNameForPrint = estimateContactName || CONTACT_NAME;
+    const printableHtml = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Estimate</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 12mm;
+            }
+            * { box-sizing: border-box; }
+            body {
+              margin: 12mm;
+              font-family: "Segoe UI", Tahoma, sans-serif;
+              color: #222;
+            }
+            .logo-banner {
+              display: flex;
+              justify-content: flex-start;
+              align-items: center;
+              margin-bottom: 8px;
+            }
+            .logo-banner img {
+              height: 100px;
+              object-fit: contain;
+              display: block;
+            }
+            .logo-separator {
+              border-bottom: 2px solid #b10d27;
+              margin: 8px 0 12px 0;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              gap: 16px;
+              border-bottom: 2px solid #b10d27;
+              padding-bottom: 12px;
+            }
+            .company-block {
+              display: flex;
+              gap: 12px;
+              align-items: center;
+            }
+            .company-logo img {
+              height: 60px;
+              object-fit: contain;
+            }
+            .company-details {
+              font-size: 12px;
+              line-height: 1.4;
+            }
+            .quote-title {
+              font-size: 24px;
+              font-weight: 700;
+              margin: 16px 0 6px 0;
+              color: #000;
+            }
+            .meta-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+              gap: 8px 16px;
+              margin-bottom: 16px;
+              font-size: 12px;
+            }
+            .meta-grid strong {
+              display: inline-block;
+              min-width: 110px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 11px;
+            }
+            thead th {
+              text-align: left;
+              border-bottom: 2px solid #b10d27;
+              padding: 6px 5px;
+              font-weight: 700;
+              font-size: 11px;
+            }
+            tbody td {
+              border-bottom: 1px solid #e4e7eb;
+              padding: 5px;
+              vertical-align: top;
+            }
+            tfoot td {
+              padding: 5px;
+            }
+            .summary-row td {
+              border-top: 1px solid #d7dce4;
+            }
+            .summary-label {
+              font-weight: 600;
+            }
+            .summary-value {
+              text-align: right;
+            }
+            .notes {
+              margin-top: 18px;
+              font-size: 11px;
+              line-height: 1.45;
+            }
+            .right {
+              text-align: right;
+            }
+            @media print {
+              body { margin: 12mm; }
+              .no-print { display: none; }
+              thead { display: table-header-group; }
+              tfoot { display: table-row-group; }
+              tr { page-break-inside: avoid; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="logo-banner">
+            <img src="__LOGO_SRC__" alt="Company Logo" />
+          </div>
+          <div class="header">
+            <div class="company-details">
+              <div>${companyNameForPrint}</div>
+              <div>Integrated Engineering Contracting Co.</div>
+            </div>
+            <div class="company-details">
+              <div><strong>Company Name:</strong> ${companyNameForPrint}</div>
+              <div><strong>Contact Name:</strong> ${contactNameForPrint}</div>
+              <div><strong>Project Name:</strong> ${estimateProjectName || "—"}</div>
+              <div><strong>Subject:</strong> ${estimateSubject || "—"}</div>
+            </div>
+          </div>
+
+          <div class="quote-title">Quotation #110000027</div>
+
+          <div class="meta-grid">
+            <div><strong>Quotation Date:</strong> ${formatDate(quotationDate)}</div>
+            <div><strong>Expiration:</strong> ${formatDate(expirationDate)}</div>
+            <div><strong>Salesperson:</strong> —</div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 36px;">S.N</th>
+                <th style="min-width: 220px;">Description</th>
+                <th style="width: 70px;">Capacity</th>
+                <th style="width: 70px;">Size</th>
+                <th style="width: 55px;">Quantity</th>
+                <th style="width: 50px;">Unit</th>
+                <th style="width: 110px;">Remarks</th>
+                <th style="width: 80px;">Unit Price</th>
+                <th style="width: 100px;">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+            <tfoot>
+              ${summaryRowsHtml}
+            </tfoot>
+          </table>
+
+          <div class="notes">
+            <p><strong>Payment terms:</strong> 100% advance payment</p>
+            <p><strong>Delivery Terms:</strong> DDP</p>
+            <p><strong>Delivery Period:</strong> TBD</p>
+            <p><strong>Scope of Work:</strong> Supply only</p>
+            <p><strong>Important Notes:</strong> Prices are based on complete system supply under one PO. Partial orders or quantity changes may cause price revisions.</p>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const logoDataUrl = await fetchLogoDataUrl();
+    const logoUrlForPrint =
+      logoDataUrl || `${window.location.origin}${COMPANY_LOGO_URL}`;
+
+    const waitForImages = (doc: Document, timeoutMs = 2500) =>
+      new Promise<void>((resolve) => {
+        try {
+          const images = Array.from(doc.images || []);
+          if (!images.length) return resolve();
+          let loaded = 0;
+          const done = () => {
+            loaded += 1;
+            if (loaded >= images.length) resolve();
+          };
+          images.forEach((img) => {
+            if (img.complete) {
+              done();
+            } else {
+              img.addEventListener("load", done, { once: true });
+              img.addEventListener("error", done, { once: true });
+            }
+          });
+          setTimeout(() => resolve(), timeoutMs);
+        } catch {
+          resolve();
+        }
+      });
+
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.setAttribute("sandbox", "allow-same-origin allow-scripts allow-modals");
+    document.body.appendChild(iframe);
+
+    const frameDoc = iframe.contentWindow?.document;
+    if (!frameDoc) return;
+    frameDoc.open();
+    frameDoc.write(printableHtml.replace(/__LOGO_SRC__/g, logoUrlForPrint));
+    frameDoc.close();
+
+    await waitForImages(frameDoc);
+
+    iframe.contentWindow?.focus();
+    iframe.contentWindow?.print();
+
+    setTimeout(() => {
+      iframe.remove();
+    }, 1000);
+  }, [
+    estimateTableRows,
+    estimateTotals.subtotal,
+    estimateTotals.totalWithVat,
+    estimateTotals.vat,
+    estimateProjectName,
+    estimateSubject,
+  ]);
 
   const pickFieldFromRow = (
     row: Record<string, string | number> | undefined,
@@ -1711,8 +2309,9 @@ function App() {
             const row = match.price_row as Record<string, string | number> | undefined;
             const rowPrice = pickFieldFromRow(row, [/price/i]);
             const rowMh = pickFieldFromRow(row, [/manhour/i, /mh/i]);
-            const nextUnitPrice =
+            const nextUnitPriceRaw =
               match.unit_price !== undefined ? String(match.unit_price) : rowPrice ?? entry.item.unit_price;
+            const nextUnitPrice = roundPrice(nextUnitPriceRaw);
             const nextUnitMh =
               match.unit_manhour !== undefined ? String(match.unit_manhour) : rowMh ?? entry.item.unit_manhour;
             return {
@@ -1768,7 +2367,8 @@ function App() {
     setPricingSelections(prev => {
       const next = [...prev];
       if (!next[idx]) return prev;
-      const updatedItem = { ...next[idx].item, [field]: value };
+      const nextValue = field === "unit_price" ? roundPrice(value) : value;
+      const updatedItem = { ...next[idx].item, [field]: nextValue };
       if (field === "unit_price" || field === "quantity") {
         updatedItem.total_price = computeTotalPrice(updatedItem.unit_price, updatedItem.quantity);
       }
@@ -1797,7 +2397,7 @@ function App() {
     setAtgError("");
     try {
       const data: AtgTotals = await fetchAtgTotals();
-      const unitPrice = normaliseNumericValue(data.totalSellingPrice);
+      const unitPrice = roundPrice(normaliseNumericValue(data.totalSellingPrice));
       const unitManhour = normaliseNumericValue(data.totalManhour);
       setAtgRow(prev => {
         const qty = prev.qty || "1";
@@ -1847,7 +2447,7 @@ function App() {
         }),
       };
       const data = await calculateElectrical(payload);
-      const unitPrice = normaliseNumericValue(data.totalPrice);
+      const unitPrice = roundPrice(normaliseNumericValue(data.totalPrice));
       const unitManhour = normaliseNumericValue(data.totalManhours);
       setElectricalRow(prev => {
         const qty = prev.qty || "1";
@@ -2083,7 +2683,7 @@ function App() {
 
         {electricalModalOpen && (
           <div className="modal-backdrop">
-            <div className="modal">
+            <div className="modal" style={{ maxWidth: "900px", width: "90vw" }}>
               <div className="modal__header">
                 <h3 className="modal__title">Electrical Variables</h3>
                 <button
@@ -2456,9 +3056,13 @@ function App() {
                   type="button"
                   className="btn-match"
                   onClick={handleProceedFromReview}
-                  disabled={boqCompareLoading}
+                  disabled={boqCompareLoading || boqEnrichLoading}
                 >
-                  {hasDrawingData && hasBoqData ? "Compare" : "Finalize items"}
+                  {boqEnrichLoading
+                    ? "Completing BOQ…"
+                    : hasDrawingData && hasBoqData
+                      ? "Compare"
+                      : "Finalize items"}
                 </button>
               </div>
             </div>
@@ -2467,8 +3071,15 @@ function App() {
                 <div className="review-block">
                   <p className="eyebrow">Extracted Items from Drawings</p>
                   <div className="table-toolbar">
-                    <span className="table-count">Selected {drawingSelectedCount} / {drawingReviewRows.length}</span>
-                    <div className="table-toolbar__actions">
+                    <span className="table-count">Selected {drawingSelectedCount} / {filteredDrawingReviewRows.length}</span>
+                    <div className="table-toolbar__actions" style={{ gap: "0.5rem" }}>
+                      <input
+                        className="form-input form-input--table"
+                        placeholder="Search description…"
+                        value={drawingSearch}
+                        onChange={(e) => setDrawingSearch(e.target.value)}
+                        style={{ width: "240px" }}
+                      />
                       <button type="button" className="btn-ghost" onClick={() => setAllDrawingSelection(true)}>Check all</button>
                       <button type="button" className="btn-ghost" onClick={() => setAllDrawingSelection(false)}>Uncheck all</button>
                     </div>
@@ -2486,89 +3097,97 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {drawingReviewRows.map(({ item, fileIdx, itemIdx, key }) => {
-                          const isSelected = !!selectedDrawingRows[key];
-                          const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
-                            const target = event.target as HTMLElement;
-                            if (target.closest("input, textarea, button, select")) return;
-                            setSelectedDrawingRows(prev => ({ ...prev, [key]: !prev[key] }));
-                          };
-                          return (
-                            <tr
-                              key={key}
-                              className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
-                              onClick={handleRowClick}
-                            >
-                              <td className="checkbox-col">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    const checked = e.target.checked;
-                                    setSelectedDrawingRows(prev => ({ ...prev, [key]: checked }));
-                                  }}
-                                />
-                              </td>
-                              <td className="finalize-col finalize-col--description">
-                                <textarea
-                                  className="form-input form-input--table finalize-textarea"
-                                  value={item.description || item.full_description || ""}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    updateDrawingItemField(fileIdx, itemIdx, "description", e.target.value);
-                                  }}
-                                  placeholder="Description"
-                                  rows={1}
-                                />
-                              </td>
-                              <td className="finalize-col finalize-col--capacity">
-                                <input
-                                  className="form-input form-input--table"
-                                  value={item.capacity || ""}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    updateDrawingItemField(fileIdx, itemIdx, "capacity", e.target.value);
-                                  }}
-                                  placeholder="Capacity"
-                                />
-                              </td>
-                              <td className="finalize-col finalize-col--size">
-                                <input
-                                  className="form-input form-input--table"
-                                  value={item.size || ""}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    updateDrawingItemField(fileIdx, itemIdx, "size", e.target.value);
-                                  }}
-                                  placeholder="Size"
-                                />
-                              </td>
-                              <td className="finalize-col finalize-col--qty">
-                                <input
-                                  className="form-input form-input--table"
-                                  value={item.quantity || ""}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    updateDrawingItemField(fileIdx, itemIdx, "quantity", e.target.value);
-                                  }}
-                                  placeholder="Qty"
-                                />
-                              </td>
-                              <td className="finalize-col finalize-col--unit">
-                                <input
-                                  className="form-input form-input--table"
-                                  value={item.unit || ""}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    updateDrawingItemField(fileIdx, itemIdx, "unit", e.target.value);
-                                  }}
-                                  placeholder="Unit"
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
+                        {filteredDrawingReviewRows.length ? (
+                          filteredDrawingReviewRows.map(({ item, fileIdx, itemIdx, key }) => {
+                            const isSelected = !!selectedDrawingRows[key];
+                            const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+                              const target = event.target as HTMLElement;
+                              if (target.closest("input, textarea, button, select")) return;
+                              setSelectedDrawingRows(prev => ({ ...prev, [key]: !prev[key] }));
+                            };
+                            return (
+                              <tr
+                                key={key}
+                                className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
+                                onClick={handleRowClick}
+                              >
+                                <td className="checkbox-col">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      const checked = e.target.checked;
+                                      setSelectedDrawingRows(prev => ({ ...prev, [key]: checked }));
+                                    }}
+                                  />
+                                </td>
+                                <td className="finalize-col finalize-col--description">
+                                  <textarea
+                                    className="form-input form-input--table finalize-textarea"
+                                    value={item.description || item.full_description || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateDrawingItemField(fileIdx, itemIdx, "description", e.target.value);
+                                    }}
+                                    placeholder="Description"
+                                    rows={1}
+                                  />
+                                </td>
+                                <td className="finalize-col finalize-col--capacity">
+                                  <input
+                                    className="form-input form-input--table"
+                                    value={item.capacity || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateDrawingItemField(fileIdx, itemIdx, "capacity", e.target.value);
+                                    }}
+                                    placeholder="Capacity"
+                                  />
+                                </td>
+                                <td className="finalize-col finalize-col--size">
+                                  <input
+                                    className="form-input form-input--table"
+                                    value={item.size || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateDrawingItemField(fileIdx, itemIdx, "size", e.target.value);
+                                    }}
+                                    placeholder="Size"
+                                  />
+                                </td>
+                                <td className="finalize-col finalize-col--qty">
+                                  <input
+                                    className="form-input form-input--table"
+                                    value={item.quantity || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateDrawingItemField(fileIdx, itemIdx, "quantity", e.target.value);
+                                    }}
+                                    placeholder="Qty"
+                                  />
+                                </td>
+                                <td className="finalize-col finalize-col--unit">
+                                  <input
+                                    className="form-input form-input--table"
+                                    value={item.unit || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateDrawingItemField(fileIdx, itemIdx, "unit", e.target.value);
+                                    }}
+                                    placeholder="Unit"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={6} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                              No drawing items match this description search.
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -2579,8 +3198,15 @@ function App() {
                 <div className="review-block">
                   <p className="eyebrow">Extracted BOQ Items</p>
                   <div className="table-toolbar">
-                    <span className="table-count">Selected {boqSelectedCount} / {boqReviewRows.length}</span>
-                    <div className="table-toolbar__actions">
+                    <span className="table-count">Selected {boqSelectedCount} / {filteredBoqReviewRows.length}</span>
+                    <div className="table-toolbar__actions" style={{ gap: "0.5rem" }}>
+                      <input
+                        className="form-input form-input--table"
+                        placeholder="Search description…"
+                        value={boqSearch}
+                        onChange={(e) => setBoqSearch(e.target.value)}
+                        style={{ width: "240px" }}
+                      />
                       <button type="button" className="btn-ghost" onClick={() => setAllBoqSelection(true)}>Check all</button>
                       <button type="button" className="btn-ghost" onClick={() => setAllBoqSelection(false)}>Uncheck all</button>
                     </div>
@@ -2591,72 +3217,104 @@ function App() {
                         <tr>
                           <th className="checkbox-col"></th>
                           <th className="boq-col-description">Description</th>
+                          <th className="boq-col-capacity">Capacity</th>
+                          <th className="boq-col-size">Size</th>
                           <th className="boq-col-qty">Quantity</th>
                           <th className="boq-col-unit">Unit</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {boqReviewRows.map(({ item, itemIdx, key }) => {
-                          const isSelected = !!selectedBoqRows[key];
-                          const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
-                            const target = event.target as HTMLElement;
-                            if (target.closest("input, textarea, button, select")) return;
-                            setSelectedBoqRows(prev => ({ ...prev, [key]: !prev[key] }));
-                          };
-                          return (
-                            <tr
-                              key={key}
-                              className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
-                              onClick={handleRowClick}
-                            >
-                              <td className="checkbox-col">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    const checked = e.target.checked;
-                                    setSelectedBoqRows(prev => ({ ...prev, [key]: checked }));
-                                  }}
-                                />
-                              </td>
-                              <td className="boq-col-description">
-                                <textarea
-                                  className="form-input form-input--table finalize-textarea"
-                                  value={item.description || item.full_description || ""}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    updateBoqItemField(itemIdx, "description", e.target.value);
-                                  }}
-                                  placeholder="Description"
-                                  rows={1}
-                                />
-                              </td>
-                              <td>
-                                <input
-                                  className="form-input form-input--table"
-                                  value={item.quantity || ""}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    updateBoqItemField(itemIdx, "quantity", e.target.value);
-                                  }}
-                                  placeholder="Qty"
-                                />
-                              </td>
-                              <td className="boq-col-unit">
-                                <input
-                                  className="form-input form-input--table"
-                                  value={item.unit || ""}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    updateBoqItemField(itemIdx, "unit", e.target.value);
-                                  }}
-                                  placeholder="Unit"
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
+                        {filteredBoqReviewRows.length ? (
+                          filteredBoqReviewRows.map(({ item, itemIdx, key }) => {
+                            const isSelected = !!selectedBoqRows[key];
+                            const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+                              const target = event.target as HTMLElement;
+                              if (target.closest("input, textarea, button, select")) return;
+                              setSelectedBoqRows(prev => ({ ...prev, [key]: !prev[key] }));
+                            };
+                            return (
+                              <tr
+                                key={key}
+                                className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
+                                onClick={handleRowClick}
+                              >
+                                <td className="checkbox-col">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      const checked = e.target.checked;
+                                      setSelectedBoqRows(prev => ({ ...prev, [key]: checked }));
+                                    }}
+                                  />
+                                </td>
+                                <td className="boq-col-description">
+                                  <textarea
+                                    className="form-input form-input--table finalize-textarea"
+                                    value={item.description || item.full_description || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateBoqItemField(itemIdx, "description", e.target.value);
+                                    }}
+                                    placeholder="Description"
+                                    rows={1}
+                                  />
+                                </td>
+                                <td className="boq-col-capacity">
+                                  <input
+                                    className="form-input form-input--table"
+                                    value={item.capacity || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateBoqItemField(itemIdx, "capacity", e.target.value);
+                                    }}
+                                    placeholder="Capacity"
+                                  />
+                                </td>
+                                <td className="boq-col-size">
+                                  <input
+                                    className="form-input form-input--table"
+                                    value={item.size || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateBoqItemField(itemIdx, "size", e.target.value);
+                                    }}
+                                    placeholder="Size"
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    className="form-input form-input--table"
+                                    value={item.quantity || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateBoqItemField(itemIdx, "quantity", e.target.value);
+                                    }}
+                                    placeholder="Qty"
+                                  />
+                                </td>
+                                <td className="boq-col-unit">
+                                  <input
+                                    className="form-input form-input--table"
+                                    value={item.unit || ""}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateBoqItemField(itemIdx, "unit", e.target.value);
+                                    }}
+                                    placeholder="Unit"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={6} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                              No BOQ items match this description search.
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -2797,9 +3455,13 @@ function App() {
               items={finalizeItems}
               onChange={setFinalizeItems}
               title=""
-              onAddRow={() => setFinalizeItems(prev => [...prev, { item: {}, source: "manual" }])}
+              searchQuery={finalizeSearch}
+              onSearchChange={setFinalizeSearch}
             />
-            <div className="table-actions">
+            <div className="table-actions" style={{ justifyContent: "space-between", gap: "0.75rem" }}>
+              <button type="button" className="btn-secondary" onClick={() => setFinalizeItems(prev => [...prev, { item: {}, source: "manual" }])}>
+                + Add row
+              </button>
               <button type="button" className="btn-match btn-outline" onClick={handleGoToPricing}>
                 Go to Pricing
               </button>
@@ -2812,6 +3474,24 @@ function App() {
             <div className="panel__header">
               <div>
                 <p className="eyebrow">Pricing</p>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <label htmlFor="minSellingPrice" style={{ fontWeight: 600 }}>
+                  Min Selling Price
+                </label>
+                <input
+                  id="minSellingPrice"
+                  type="number"
+                  className="form-input"
+                  value={minSellingPrice}
+                  onChange={(e) => setMinSellingPrice(e.target.value)}
+                  style={{
+                    width: "10rem",
+                    height: "2.4rem",
+                    color: minSellingPriceColor,
+                    fontWeight: 700,
+                  }}
+                />
               </div>
             </div>
             <div className="pricing-accordion">
@@ -2835,212 +3515,233 @@ function App() {
                           pricingSelections.length === 0 ? (
                             <p className="empty-state" style={{ margin: 0 }}>No items available for pricing yet.</p>
                           ) : (
-                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
-                              <table className="matches-table resizable-table pricing-table">
-                                <thead>
-                                  <tr>
-                                    <ResizableTh resize={pricingResize} index={0}>Id</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Item</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Description</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={3}>Capacity</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={4}>Size</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={5}>QTY</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={6}>Unit</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={7}>Remarks</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={8}>Unit Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={9}>Total Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={10}>Location</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={11}>Unit Manhour</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={12}>Total Manhour</ResizableTh>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {pricingSelections.map((sel, idx) => (
-                                    <tr key={`pricing-${idx}`} className="matches-table__row">
-                                      <td>{idx + 1}</td>
-                                      <td>
-                                        {renderCell(sel.item.item_type)}
-                                      </td>
-                                      <td>
-                                        <div
-                                          className="pricing-desc-cell"
-                                          ref={(node) => {
-                                            pricingDropdownRefs.current[idx] = node;
-                                          }}
-                                          onBlurCapture={(e) => {
-                                            const nextTarget = e.relatedTarget as Node | null;
-                                            if (!nextTarget || !e.currentTarget.contains(nextTarget)) {
-                                              closeMatchDropdown(idx);
-                                            }
-                                          }}
-                                          onMouseLeave={() => closeMatchDropdown(idx)}
-                                        >
-                                          <span className="pricing-desc-text">
-                                            {renderCell(sel.item.description || sel.item.full_description)}
-                                          </span>
-                                          {pricingMatchOptions[idx] && pricingMatchOptions[idx].length >= 1 && (
-                                            <>
-                                              <button
-                                                type="button"
-                                                className="pricing-match-trigger"
-                                                aria-label="Select pricing option"
-                                                aria-expanded={pricingDropdownOpen[idx] || false}
-                                                ref={(node) => {
-                                                  pricingTriggerRefs.current[idx] = node;
-                                                }}
-                                                onClick={() => openMatchDropdown(idx)}
-                                              >
-                                                ▾
-                                              </button>
-                                              {pricingDropdownOpen[idx] && (
-                                                <div
-                                                  className="pricing-match-menu"
-                                                  style={
-                                                    pricingDropdownPos[idx]
-                                                      ? {
-                                                        top: pricingDropdownPos[idx].top,
-                                                        left: pricingDropdownPos[idx].left,
-                                                        minWidth: Math.max(180, pricingDropdownPos[idx].width + 8),
-                                                        fontSize: "0.85rem",
-                                                        padding: "0.3rem",
-                                                      }
-                                                      : undefined
-                                                  }
-                                                  onMouseLeave={() => closeMatchDropdown(idx)}
-                                                >
-                                                  {pricingMatchOptions[idx].map((opt, optIdx) => (
-                                                    <button
-                                                      key={`${idx}-match-${optIdx}`}
-                                                      type="button"
-                                                      className={`pricing-match-menu__item ${pricingMatchChoice[idx] === optIdx ? "is-active" : ""
-                                                        }`}
-                                                      style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
-                                                      onClick={() => {
-                                                        handlePricingMatchChange(idx, optIdx);
-                                                        setPricingDropdownOpen((prev) => ({
-                                                          ...prev,
-                                                          [idx]: false,
-                                                        }));
-                                                      }}
-                                                    >
-                                                      {getMatchLabel(opt)}
-                                                    </button>
-                                                  ))}
-                                                  <div
-                                                    className="pricing-match-search"
-                                                    style={{
-                                                      borderTop: "1px solid #e0e0e0",
-                                                      marginTop: "0.4rem",
-                                                      paddingTop: "0.4rem",
-                                                      display: "flex",
-                                                      flexDirection: "column",
-                                                      gap: "0.35rem",
-                                                    }}
-                                                  >
-                                                    <input
-                                                      id={`pricing-search-${idx}`}
-                                                      className="form-input form-input--table"
-                                                      type="text"
-                                                      placeholder="Search Pricing List…"
-                                                      value={priceListSearch[idx] || ""}
-                                                      style={{ fontSize: "0.85rem", height: "1.9rem" }}
-                                                      onChange={(e) => handlePriceListSearchChange(idx, e.target.value)}
-                                                    />
-                                                    {(() => {
-                                                      const query = priceListSearch[idx] || "";
-                                                      const matches = findPriceListMatches(query);
-                                                      const canSearch = query.trim().length >= 3;
-                                                      if (priceListLoading) {
-                                                        return <p className="pricing-match-menu__hint">Loading pricing list…</p>;
-                                                      }
-                                                      if (priceListError) {
-                                                        return <p className="pricing-match-menu__hint" style={{ color: "#c00" }}>{priceListError}</p>;
-                                                      }
-                                                      if (!canSearch) {
-                                                        return <p className="pricing-match-menu__hint">Type at least 3 characters to search</p>;
-                                                      }
-                                                      if (!matches.length) {
-                                                        return <p className="pricing-match-menu__hint">No matches found</p>;
-                                                      }
-                                                      return (
-                                                        <div
-                                                          className="pricing-match-search__results"
-                                                          style={{
-                                                            display: "flex",
-                                                            flexDirection: "column",
-                                                            gap: "0.25rem",
-                                                            maxHeight: "140px",
-                                                            overflowY: "auto",
-                                                          }}
-                                                        >
-                                                          {matches.map(({ row: priceRow, rowIndex }) => {
-                                                            const label = getPriceListItemLabel(priceRow) || `Item ${rowIndex + 1}`;
-                                                            const description =
-                                                              (priceRow["Description"] as string) ||
-                                                              (priceRow["Desc"] as string) ||
-                                                              "";
-                                                            return (
-                                                              <button
-                                                                key={`pricing-search-${idx}-${rowIndex}`}
-                                                                type="button"
-                                                                className="pricing-match-menu__item"
-                                                                style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
-                                                                onClick={() => handleApplyPriceListRow(idx, rowIndex)}
-                                                              >
-                                                                <span style={{ display: "block", fontWeight: 600 }}>{label}</span>
-                                                                {description && (
-                                                                  <span className="pricing-match-menu__note" style={{ display: "block", fontSize: "0.85rem", color: "#444" }}>
-                                                                    {description}
-                                                                  </span>
-                                                                )}
-                                                              </button>
-                                                            );
-                                                          })}
-                                                        </div>
-                                                      );
-                                                    })()}
-                                                  </div>
-                                                </div>
-                                              )}
-                                            </>
-                                          )}
-                                        </div>
-                                      </td>
-                                      <td>{renderCell(sel.item.capacity)}</td>
-                                      <td>{renderCell(sel.item.size)}</td>
-                                      <td>
-                                        <input
-                                          className="form-input form-input--table"
-                                          type="number"
-                                          min="0"
-                                          step="1"
-                                          value={sel.item.quantity || ""}
-                                          onChange={(e) => handlePricingItemChange(idx, "quantity", e.target.value)}
-                                          placeholder="QTY"
-                                        />
-                                      </td>
-                                      <td>{renderCell(sel.item.unit)}</td>
-                                      <td>
-                                        {renderCell(sel.item.remarks)}
-                                      </td>
-                                      <td>
-                                        {renderCell(sel.item.unit_price)}
-                                      </td>
-                                      <td>{renderCell(sel.item.total_price)}</td>
-                                      <td>
-                                        {renderCell(sel.item.location)}
-                                      </td>
-                                      <td>
-                                        {renderCell(sel.item.unit_manhour)}
-                                      </td>
-                                      <td>
-                                        {renderCell(sel.item.total_manhour)}
-                                      </td>
+                            <>
+                              <div className="table-toolbar" style={{ justifyContent: "flex-end", margin: "0.25rem 0 0.5rem" }}>
+                                <input
+                                  className="form-input form-input--table"
+                                  placeholder="Search description…"
+                                  value={pricingSearch}
+                                  onChange={(e) => setPricingSearch(e.target.value)}
+                                  style={{ width: "260px" }}
+                                />
+                              </div>
+                              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                                <table className="matches-table resizable-table pricing-table">
+                                  <thead>
+                                    <tr>
+                                      <ResizableTh resize={pricingResize} index={0}>Id</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={1}>Item</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={2}>Description</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={3}>Capacity</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={4}>Size</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={5}>QTY</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={6}>Unit</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={7}>Remarks</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={8}>Unit Price</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={9}>Total Price</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={10}>Unit Manhour</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={11}>Total Manhour</ResizableTh>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                                  </thead>
+                                  <tbody>
+                                    {filteredPricingSelections.length ? (
+                                      filteredPricingSelections.map(({ sel, idx }) => {
+                                        const rowIdx = idx;
+                                        const matchOptions = pricingMatchOptions[rowIdx] || [];
+                                        return (
+                                          <tr key={`pricing-${rowIdx}`} className="matches-table__row">
+                                            <td>{rowIdx + 1}</td>
+                                            <td>
+                                              {renderCell(sel.item.item_type)}
+                                            </td>
+                                            <td>
+                                              <div
+                                                className="pricing-desc-cell"
+                                                ref={(node) => {
+                                                  pricingDropdownRefs.current[rowIdx] = node;
+                                                }}
+                                                onBlurCapture={(e) => {
+                                                  const nextTarget = e.relatedTarget as Node | null;
+                                                  if (!nextTarget || !e.currentTarget.contains(nextTarget)) {
+                                                    closeMatchDropdown(rowIdx);
+                                                  }
+                                                }}
+                                                onMouseLeave={() => closeMatchDropdown(rowIdx)}
+                                              >
+                                                <span className="pricing-desc-text">
+                                                  {renderCell(sel.item.description || sel.item.full_description)}
+                                                </span>
+                                                <>
+                                                  <button
+                                                    type="button"
+                                                    className="pricing-match-trigger"
+                                                    aria-label="Select pricing option"
+                                                    aria-expanded={pricingDropdownOpen[rowIdx] || false}
+                                                    ref={(node) => {
+                                                      pricingTriggerRefs.current[rowIdx] = node;
+                                                    }}
+                                                    onClick={() => openMatchDropdown(rowIdx)}
+                                                  >
+                                                    ▾
+                                                  </button>
+                                                  {pricingDropdownOpen[rowIdx] && (
+                                                    <div
+                                                      className="pricing-match-menu"
+                                                      style={
+                                                        pricingDropdownPos[rowIdx]
+                                                          ? {
+                                                            top: pricingDropdownPos[rowIdx].top,
+                                                            left: pricingDropdownPos[rowIdx].left,
+                                                            minWidth: Math.max(180, pricingDropdownPos[rowIdx].width + 8),
+                                                            fontSize: "0.85rem",
+                                                            padding: "0.3rem",
+                                                          }
+                                                          : undefined
+                                                      }
+                                                      onMouseLeave={() => closeMatchDropdown(rowIdx)}
+                                                    >
+                                                      {matchOptions.length > 0 ? (
+                                                        matchOptions.map((opt, optIdx) => (
+                                                          <button
+                                                            key={`${rowIdx}-match-${optIdx}`}
+                                                            type="button"
+                                                            className={`pricing-match-menu__item ${pricingMatchChoice[rowIdx] === optIdx ? "is-active" : ""
+                                                              }`}
+                                                            style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
+                                                            onClick={() => {
+                                                              handlePricingMatchChange(rowIdx, optIdx);
+                                                              setPricingDropdownOpen((prev) => ({
+                                                                ...prev,
+                                                                [rowIdx]: false,
+                                                              }));
+                                                            }}
+                                                          >
+                                                            {getMatchLabel(opt)}
+                                                          </button>
+                                                        ))
+                                                      ) : (
+                                                        <p className="pricing-match-menu__hint">No suggestions yet. Use search below.</p>
+                                                      )}
+                                                      <div
+                                                        className="pricing-match-search"
+                                                        style={{
+                                                          borderTop: "1px solid #e0e0e0",
+                                                          marginTop: "0.4rem",
+                                                          paddingTop: "0.4rem",
+                                                          display: "flex",
+                                                          flexDirection: "column",
+                                                          gap: "0.35rem",
+                                                        }}
+                                                      >
+                                                        <input
+                                                          id={`pricing-search-${rowIdx}`}
+                                                          className="form-input form-input--table"
+                                                          type="text"
+                                                          placeholder="Search Pricing List…"
+                                                          value={priceListSearch[rowIdx] || ""}
+                                                          style={{ fontSize: "0.85rem", height: "1.9rem" }}
+                                                          onChange={(e) => handlePriceListSearchChange(rowIdx, e.target.value)}
+                                                        />
+                                                        {(() => {
+                                                          const query = priceListSearch[rowIdx] || "";
+                                                          const matches = findPriceListMatches(query);
+                                                          const canSearch = query.trim().length >= 3;
+                                                          if (priceListLoading) {
+                                                            return <p className="pricing-match-menu__hint">Loading pricing list…</p>;
+                                                          }
+                                                          if (priceListError) {
+                                                            return <p className="pricing-match-menu__hint" style={{ color: "#c00" }}>{priceListError}</p>;
+                                                          }
+                                                          if (!canSearch) {
+                                                            return <p className="pricing-match-menu__hint">Type at least 3 characters to search</p>;
+                                                          }
+                                                          if (!matches.length) {
+                                                            return <p className="pricing-match-menu__hint">No matches found</p>;
+                                                          }
+                                                          return (
+                                                            <div
+                                                              className="pricing-match-search__results"
+                                                              style={{
+                                                                display: "flex",
+                                                                flexDirection: "column",
+                                                                gap: "0.25rem",
+                                                                maxHeight: "140px",
+                                                                overflowY: "auto",
+                                                              }}
+                                                            >
+                                                              {matches.map(({ row: priceRow, rowIndex }) => {
+                                                                const label = getPriceListItemLabel(priceRow) || `Item ${rowIndex + 1}`;
+                                                                const description =
+                                                                  (priceRow["Description"] as string) ||
+                                                                  (priceRow["Desc"] as string) ||
+                                                                  "";
+                                                                return (
+                                                                  <button
+                                                                    key={`pricing-search-${rowIdx}-${rowIndex}`}
+                                                                    type="button"
+                                                                    className="pricing-match-menu__item"
+                                                                    style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
+                                                                    onClick={() => handleApplyPriceListRow(rowIdx, rowIndex)}
+                                                                  >
+                                                                    <span style={{ display: "block", fontWeight: 600 }}>{label}</span>
+                                                                    {description && (
+                                                                      <span className="pricing-match-menu__note" style={{ display: "block", fontSize: "0.85rem", color: "#444" }}>
+                                                                        {description}
+                                                                      </span>
+                                                                    )}
+                                                                  </button>
+                                                                );
+                                                              })}
+                                                            </div>
+                                                          );
+                                                        })()}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                </>
+                                              </div>
+                                            </td>
+                                            <td>{renderCell(sel.item.capacity)}</td>
+                                            <td>{renderCell(sel.item.size)}</td>
+                                            <td>
+                                              <input
+                                                className="form-input form-input--table"
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                value={sel.item.quantity || ""}
+                                                onChange={(e) => handlePricingItemChange(rowIdx, "quantity", e.target.value)}
+                                                placeholder="QTY"
+                                              />
+                                            </td>
+                                            <td>{renderCell(sel.item.unit)}</td>
+                                            <td>
+                                              {renderCell(sel.item.remarks)}
+                                            </td>
+                                            <td>
+                                              {renderCell(sel.item.unit_price)}
+                                            </td>
+                                            <td>{renderCell(sel.item.total_price)}</td>
+                                            <td>
+                                              {renderCell(sel.item.unit_manhour)}
+                                            </td>
+                                            <td>
+                                              {renderCell(sel.item.total_manhour)}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })
+                                    ) : (
+                                      <tr>
+                                        <td colSpan={12} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                                          No items match this description search.
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
                           )
                         ) : section.id === "electrical" ? (
                           <div className="pricing-electrical">
@@ -3149,7 +3850,7 @@ function App() {
                                         value={atgRow.unitPrice}
                                         onChange={(e) =>
                                           setAtgRow(prev => {
-                                            const unitPrice = e.target.value;
+                                            const unitPrice = roundPrice(e.target.value);
                                             const qty = prev.qty || "0";
                                             return {
                                               ...prev,
@@ -3320,6 +4021,176 @@ function App() {
                 );
               })}
             </div>
+            <div className="table-actions" style={{ paddingTop: "1rem" }}>
+              <button
+                type="button"
+                className="btn-match btn-outline"
+                onClick={() => setActiveEstimateStep("estimate")}
+              >
+                Go to Estimate Generation
+              </button>
+            </div>
+          </section>
+        )}
+
+        {activePage === "new-estimate" && activeEstimateStep === "estimate" && (
+          <section id="estimate" className="panel">
+            <div className="panel__header">
+              <div>
+                <p className="eyebrow">Finalize</p>
+                <h2 className="section-title section-title--compact">Final Estimate</h2>
+              </div>
+            </div>
+            <div
+              className="form-grid"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "0.75rem",
+                marginBottom: "1rem",
+                alignItems: "flex-start",
+              }}
+            >
+              <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                <span className="form-label">Company Name</span>
+                <input
+                  className="form-input"
+                  type="text"
+                  value={estimateCompanyName}
+                  onChange={(e) => setEstimateCompanyName(e.target.value)}
+                  style={estimateInputPaddedStyle}
+                />
+              </div>
+              <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                <span className="form-label">Contact Name</span>
+                <input
+                  className="form-input"
+                  type="text"
+                  value={estimateContactName}
+                  onChange={(e) => setEstimateContactName(e.target.value)}
+                  style={estimateInputPaddedStyle}
+                />
+              </div>
+              <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                <label className="form-label" htmlFor="estimate-project-name">Project Name</label>
+                <input
+                  id="estimate-project-name"
+                  className="form-input"
+                  type="text"
+                  value={estimateProjectName}
+                  onChange={(e) => setEstimateProjectName(e.target.value)}
+                  placeholder="Enter project name"
+                  style={estimateInputPaddedStyle}
+                />
+              </div>
+              <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                <label className="form-label" htmlFor="estimate-subject">Subject</label>
+                <input
+                  id="estimate-subject"
+                  className="form-input"
+                  type="text"
+                  value={estimateSubject}
+                  onChange={(e) => setEstimateSubject(e.target.value)}
+                  placeholder="Enter subject"
+                  style={estimateInputPaddedStyle}
+                />
+              </div>
+            </div>
+            {estimateTableRows.length ? (
+              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                <table className="matches-table resizable-table pricing-table">
+                  <thead>
+                    <tr>
+                      <ResizableTh resize={estimateResize} index={0}>Id</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={1}>Description</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={2}>Capacity</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={3}>Size</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={4}>Quantity</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={5}>Unit</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={6}>Remarks</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={7}>Unit Price</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={8}>Amount</ResizableTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {estimateTableRows.map((row, idx) => (
+                      <tr key={`estimate-${idx}`} className="matches-table__row">
+                        <td>{idx + 1}</td>
+                        <td>{renderCell(row.description)}</td>
+                        <td>{renderCell(row.capacity)}</td>
+                        <td>{renderCell(row.size)}</td>
+                        <td>{renderCell(row.quantity)}</td>
+                        <td>{renderCell(row.unit)}</td>
+                        <td>{renderCell(row.remarks)}</td>
+                        <td>{renderCell(row.unitPrice)}</td>
+                        <td>{renderCell(row.totalPrice)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="matches-table__row estimate-summary-row">
+                      <td />
+                      <td className="estimate-summary-label">Total Excluding VAT</td>
+                      <td colSpan={5} />
+                      <td />
+                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.subtotal)}</strong></td>
+                    </tr>
+                    <tr className="matches-table__row estimate-summary-row">
+                      <td />
+                      <td className="estimate-summary-label">Special Discount</td>
+                      <td colSpan={4} />
+                      <td />
+                      <td>
+                        <div className="estimate-discount-input" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                          <input
+                            className="form-input form-input--table"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={estimateDiscountPct}
+                            onChange={(e) => setEstimateDiscountPct(e.target.value)}
+                            style={{ width: "5rem" }}
+                          />
+                          <span style={{ fontWeight: 600 }}>%</span>
+                        </div>
+                      </td>
+                      <td className="estimate-summary-value">
+                        <strong>{estimateTotals.discount > 0 ? `-${formatNumber(estimateTotals.discount)}` : formatNumber(0)}</strong>
+                      </td>
+                    </tr>
+                    <tr className="matches-table__row estimate-summary-row">
+                      <td />
+                      <td className="estimate-summary-label">Total After Discount Excluding VAT</td>
+                      <td colSpan={5} />
+                      <td />
+                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.afterDiscount)}</strong></td>
+                    </tr>
+                    <tr className="matches-table__row estimate-summary-row">
+                      <td />
+                      <td className="estimate-summary-label">VAT (15%)</td>
+                      <td colSpan={5} />
+                      <td />
+                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.vat)}</strong></td>
+                    </tr>
+                    <tr className="matches-table__row estimate-summary-row">
+                      <td />
+                      <td className="estimate-summary-label">Total Including VAT</td>
+                      <td colSpan={5} />
+                      <td />
+                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.totalWithVat)}</strong></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : (
+              <p className="empty-state">No estimate data to show yet.</p>
+            )}
+            <div className="table-actions" style={{ marginTop: "0.75rem", justifyContent: "flex-end" }}>
+              <button type="button" className="btn-match" onClick={() => void handleGenerateEstimatePdf()}>
+                Generate
+              </button>
+            </div>
           </section>
         )}
 
@@ -3399,6 +4270,22 @@ function App() {
             </form>
 
           </section>
+        )}
+
+        {showDrawingsOnlyConfirm && (
+          <div className="modal-backdrop">
+            <div className="modal">
+              <p>You only uploaded Drawings, no BOQ is provided, Proceed?</p>
+              <div className="modal__actions">
+                <button type="button" className="btn-secondary" onClick={handleCancelDrawingsOnly}>
+                  No
+                </button>
+                <button type="button" className="btn-match" onClick={handleConfirmDrawingsOnly}>
+                  Yes, proceed
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {feedback && <p className="feedback">{feedback}</p>}
