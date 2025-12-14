@@ -7,11 +7,18 @@ export interface AttributeValue {
 
 export interface ExtractedItem {
   item_number?: string;
+  item_type?: string;
   description?: string;
   capacity?: string;
   size?: string;
   quantity?: string;
   unit?: string;
+  remarks?: string;
+  unit_price?: string;
+  total_price?: string;
+  location?: string;
+  unit_manhour?: string;
+  total_manhour?: string;
   full_description?: string;
 }
 

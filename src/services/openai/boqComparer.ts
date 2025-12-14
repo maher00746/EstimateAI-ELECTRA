@@ -243,7 +243,6 @@ export async function comparePreExtractedLists(
 Status codes:
 - match_exact: same item, qty & unit match (for size, 1 inch = 1" = Ø1")
 - match_quantity_diff: item matches, qty differs
-- match_unit_diff: item matches, unit differs 
 - missing_in_boq: exist in drawing, not in BOQ
 - missing_in_drawing: exist in BOQ, not in drawing
 

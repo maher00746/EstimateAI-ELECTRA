@@ -24,6 +24,7 @@ function toItemsArray(payload: unknown): ExtractedItem[] {
     .filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item))
     .map((record) => ({
       item_number: record.item_number as string | undefined,
+      item_type: record.item_type as string | undefined,
       description: record.description as string | undefined,
       capacity: record.capacity as string | undefined,
       size: record.size as string | undefined,
@@ -38,6 +39,7 @@ function structuredItemsToAttributeMap(items: ExtractedItem[]): AttributeMap {
     const label = item.item_number || item.description || `Item ${index + 1}`;
 
     const parts: string[] = [];
+    if (item.item_type) parts.push(`[${item.item_type}]`);
     if (item.description) parts.push(item.description);
     if (item.capacity) parts.push(`Capacity: ${item.capacity}`);
     if (item.size) parts.push(`Size: ${item.size}`);
@@ -55,43 +57,159 @@ export async function extractAttributesWithOpenAI(
   rawText: string,
   fileName: string
 ): Promise<{ attributes: AttributeMap; items: ExtractedItem[]; totalPrice?: string }> {
-  const trimmed = rawText.replace(/\s+/g, " ").slice(0, 32000);
+  const trimmed = rawText.replace(/\s+/g, " ");
   const prompt = `
-You are a senior MEP estimator, in a company selling "Diesel Generators or Diesel-fired Boilers with the diesel fuel". Your task is to extract every measurable requirement, component and attribute from the supplied drawings and return them in a fully structured machine-readable format. Work carefully and exhaustively.
+You are a senior MEP estimator specializing in fuel systems. Extract every measurable component from the supplied MEP drawings and return them in structured JSON format. Be thorough and accurate.
 
-Scope
+═══════════════════════════════════════════════════════════════════
+EXTRACTION SCOPE (in priority order)
+═══════════════════════════════════════════════════════════════════
 
-• Extract all mechanical, electrical, instrumentation items directly shown or tagged in the drawings.
-• NO civil related items (like walls) 
-• Capture every attribute including size, diameter, capacity, material, rating, quantity, notes and standards (UL, NFPA, ASTM etc).
-• Include all Filling Point, Storage Tank, Pump, Day Tank, Piping, Valves (including BV and CV), Strainers, Leak Sensors, Level Probes (if any), Level Switches, Tank Vents, Master Control Panel, Overfill Alarm Units, Flexible Hoses, and Electrical Materials (Wiring and conduits).
-• Count all occurrences of each labelled item (e.g., BV tags, CV tags, pipe diameters, vent sizes).
-• Do not infer linear pipe lengths unless explicitly given.
-• Do not omit any attribute.
+1. TANKS
+   - Storage Tanks (extract capacity in Liters or Gallons)
+   - Day Tanks (extract capacity in Liters or Gallons)
 
-Output format
+2. PUMPS
+   - Fuel Pumps / Transfer Pumps (extract GPM/LPM flow rate, PSI pressure)
 
-Return a single JSON array where each item is an object with these fields:
+3. VALVES (count ALL instances by size)
+   - BV = Ball Valve
+   - CV = Check Valve  
+   - Gate Valve
+   - Butterfly Valve
+   - Relief Valve
 
-{
-  "item_number": "",
-  "description": "",
-  "capacity": "",
-  "size": "",
-  "quantity": "",
-  "unit": "",
-  "full_description": ""
-}
+4. PIPING (measure total length by size/material)
+   - All pipe runs with different diameters
+   - Material type if specified (steel, copper, HDPE, etc.)
 
+5. ACCESSORIES
+   - Filling Points / Fill Points
+   - Strainers (Y-strainer, etc.)
+   - Flexible Hoses / Flexible Connectors
+   - Tank Vents / Vent Caps
+   - Unions / Flanges / Couplings
 
+6. INSTRUMENTATION & CONTROLS
+   - Level Probes / Level Transmitters
+   - Level Switches / Float Switches
+   - Leak Sensors / Leak Detection
+   - Overfill Alarms / High Level Alarms
+   - Pressure Gauges
+   - Flow Meters
 
-Objective
-Provide a complete, accurate, structured extraction suitable for programmatic use in pricing, BOQ generation or database ingestion.
+7. CONTROL SYSTEMS
+   - Master Control Panel (MCP)
+   - Local Control Panels
+   - Junction Boxes
+
+8. ELECTRICAL MATERIALS
+   - Conduits (with sizes)
+   - Wiring / Cables (with sizes)
+   - Cable Trays
+
+═══════════════════════════════════════════════════════════════════
+SIZE CONVERSION TABLE (use these exact values)
+═══════════════════════════════════════════════════════════════════
+
+| Inches | mm  |     | Inches | mm  |
+|--------|-----|-----|--------|-----|
+| 1/2"   | 15  |     | 3"     | 80  |
+| 3/4"   | 20  |     | 4"     | 100 |
+| 1"     | 25  |     | 5"     | 125 |
+| 1-1/4" | 32  |     | 6"     | 150 |
+| 1-1/2" | 40  |     | 8"     | 200 |
+| 2"     | 50  |     | 10"    | 250 |
+| 2-1/2" | 65  |     | 12"    | 300 |
+
+═══════════════════════════════════════════════════════════════════
+EXTRACTION RULES
+═══════════════════════════════════════════════════════════════════
+
+1. COUNTING & AGGREGATION
+   - Group identical items by type AND size (e.g., "BV 80mm" counted separately from "BV 100mm")
+   - Count every occurrence shown on the drawing
+   - For valves: determine size from the connecting pipe diameter
+   - For pipes: sum total linear length per size
+
+2. SIZE HANDLING
+   - Convert ALL inch sizes to mm using the table above
+   - Format sizes as "XXmm" (e.g., "80mm", "100mm")
+   - Keep capacity values as-is (e.g., "10000L", "500 Gal")
+
+3. UNITS
+   - Use "Nos" for discrete items (tanks, valves, pumps, sensors, etc.)
+   - Use "LM" (Linear Meters) for pipes and conduits
+   - Use "M" for cables/wiring
+
+4. EXCLUSIONS (DO NOT EXTRACT)
+   - Civil works: concrete pads, foundations, walls, trenches
+   - Structural elements: supports, hangers, brackets
+   - Labels/legends without physical items
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════════
+
+Return a JSON array. Each item must have these fields:
+
+[
+  {
+    "item_number": "1",
+    "item_type": "STORAGE_TANK",
+    "description": "Storage Tank",
+    "capacity": "10000L",
+    "size": "",
+    "quantity": "1",
+    "unit": "Nos"
+  },
+  {
+    "item_number": "2", 
+    "item_type": "BALL_VALVE",
+    "description": "Ball Valve (BV)",
+    "capacity": "",
+    "size": "80mm",
+    "quantity": "4",
+    "unit": "Nos"
+  },
+  {
+    "item_number": "3",
+    "item_type": "PIPE",
+    "description": "Steel Pipe",
+    "capacity": "",
+    "size": "100mm",
+    "quantity": "45",
+    "unit": "LM"
+  }
+]
+
+Field definitions:
+- item_number: Sequential number starting from "1"
+- item_type: Category code (STORAGE_TANK, DAY_TANK, PUMP, BALL_VALVE, CHECK_VALVE, GATE_VALVE, PIPE, STRAINER, FLEXIBLE_HOSE, VENT, LEVEL_PROBE, LEVEL_SWITCH, LEAK_SENSOR, CONTROL_PANEL, FILLING_POINT, CONDUIT, CABLE, OTHER)
+- description: Clear item name as shown on drawing
+- capacity: Tank capacity or pump flow rate (leave empty if not applicable)
+- size: Diameter in mm or dimension (leave empty if not applicable)
+- quantity: Total count or total length
+- unit: "Nos" or "LM" or "M"
+
+═══════════════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST
+═══════════════════════════════════════════════════════════════════
+
+Before returning your response, verify:
+□ All tanks extracted with capacity
+□ All pumps extracted with GPM/PSI
+□ All BV and CV counted by size
+□ All pipe runs measured by size
+□ All sizes converted to mm
+□ Quantities are totals (not per-line)
+□ No civil items included
+□ JSON is valid and complete
 `;
 
   const client = getOpenAiClient();
   const response = await client.chat.completions.create({
-    model: config.openAiModel,
+    model: "gpt-5.2", // drawings extractor should use the latest OpenAI model
     messages: [
       {
         role: "system",
@@ -103,7 +221,7 @@ Provide a complete, accurate, structured extraction suitable for programmatic us
         content: `${prompt}\n\nBuild document name: ${fileName}\n\n${trimmed}`,
       },
     ],
-    temperature: 0.1,
+    temperature: 0,
     max_completion_tokens: 8000, // Increased to handle large documents with many attributes
   });
 
@@ -115,7 +233,6 @@ Provide a complete, accurate, structured extraction suitable for programmatic us
   if (finishReason === 'length') {
     throw new Error("The document is too large. OpenAI response was truncated. Please increase max_completion_tokens or split the document.");
   }
-
   const parsed = await parseJsonFromMessage(rawMessage);
   const items = toItemsArray(parsed);
   const attributes = structuredItemsToAttributeMap(items);

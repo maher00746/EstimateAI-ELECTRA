@@ -10,6 +10,13 @@ import type {
   EstimateDraftMeta,
   DraftEstimateState,
   ItemSource,
+  PriceMapping,
+  PriceListRow,
+  AtgTotals,
+  ElectricalTotals,
+  ElectricalCalcRequest,
+  InstallationInputs,
+  InstallationLocation,
 } from "./types";
 import type { PaginatedResponse } from "./services/api";
 import {
@@ -23,6 +30,11 @@ import {
   listDrafts,
   saveDraft,
   getDraft,
+  priceMap,
+  fetchPriceList,
+  fetchAtgTotals,
+  fetchElectricalTotals,
+  calculateElectrical,
 } from "./services/api";
 import { useAuth } from "./contexts/AuthContext";
 
@@ -33,6 +45,7 @@ const ESTIMATE_STEPS: Array<{ id: EstimateStep; label: string; description: stri
   { id: "review", label: "Review", description: "Validate extraction" },
   { id: "compare", label: "Compare", description: "BOQ vs drawings" },
   { id: "finalize", label: "Finalize", description: "Prep for pricing" },
+  { id: "pricing", label: "Pricing", description: "Review prices" },
 ];
 
 const STEP_ORDER: Record<EstimateStep, number> = {
@@ -40,9 +53,72 @@ const STEP_ORDER: Record<EstimateStep, number> = {
   review: 1,
   compare: 2,
   finalize: 3,
+  pricing: 4,
 };
 
 type AppPage = "knowledge" | "new-estimate" | "drafts";
+type PricingAccordionId = "items" | "electrical" | "atg" | "installation";
+
+const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
+  { id: "items", label: "Items" },
+  { id: "electrical", label: "Electrical" },
+  { id: "atg", label: "ATG" },
+  { id: "installation", label: "Installation" },
+];
+
+const ELECTRICAL_INPUT_DEFAULTS: Array<{ key: string; label: string; value: number }> = [
+  { key: "a2", label: "Tanks total quantity (A2)", value: 0 },
+  { key: "x", label: "X", value: 30 },
+  { key: "y", label: "Y", value: 100 },
+  { key: "z", label: "Z", value: 100 },
+  { key: "c5", label: "Single Submersible Pump", value: 1 },
+  { key: "c6", label: "Duplex Gear Pump", value: 0 },
+  { key: "c7", label: "Magnetic Float Switch (Storage Tank)", value: 1 },
+  { key: "c8", label: "Level Probe EDM-40 (Storage Tank)", value: 1 },
+  { key: "c9", label: "Oil Leak Detection Sensor (Storage Tank)", value: 1 },
+  { key: "c10", label: "Flow Meter", value: 0 },
+  { key: "c11", label: "Solenoid Valve Parker #1", value: 1 },
+  { key: "c12", label: "Solenoid Valve Parker #2", value: 0 },
+  { key: "c13", label: "Solenoid Valve Parker #3", value: 0 },
+  { key: "c14", label: "Magnetic Float Switch (Day Tank) #1", value: 1 },
+  { key: "c15", label: "Magnetic Float Switch (Day Tank) #2", value: 0 },
+  { key: "c16", label: "Magnetic Float Switch (Day Tank) #3", value: 0 },
+  { key: "c17", label: "Level Probe EDM-40 (Day Tank) #1", value: 1 },
+  { key: "c18", label: "Level Probe EDM-40 (Day Tank) #2", value: 0 },
+  { key: "c19", label: "Level Probe EDM-40 (Day Tank) #3", value: 0 },
+  { key: "c20", label: "Oil Leak Detection Sensor (Day Tank) #1", value: 1 },
+  { key: "c21", label: "Oil Leak Detection Sensor (Day Tank) #2", value: 0 },
+  { key: "c22", label: "Oil Leak Detection Sensor (Day Tank) #3", value: 0 },
+  { key: "c23", label: "Overfill Alarm Unit (Storage Tank)", value: 1 },
+  { key: "c24", label: "ATG Console", value: 0 },
+  { key: "c25", label: "Remote Annunciator", value: 0 },
+];
+
+const buildDefaultAtgRow = () => ({
+  description: "ATG System",
+  qty: "1",
+  unit: "Lot",
+  unitPrice: "",
+  totalPrice: "",
+  unitManhour: "",
+  totalManhour: "",
+});
+
+const buildDefaultElectricalRow = () => ({
+  description: "Electrical System",
+  qty: "1",
+  unit: "Lot",
+  unitPrice: "",
+  totalPrice: "",
+  unitManhour: "",
+  totalManhour: "",
+});
+
+const buildDefaultElectricalInputs = () =>
+  ELECTRICAL_INPUT_DEFAULTS.reduce<Record<string, string>>((acc, curr) => {
+    acc[curr.key] = curr.value.toString();
+    return acc;
+  }, {});
 
 // Helper function to get attribute value (handles both old and new format)
 function getAttributeValue(attr: string | AttributeValue | undefined): string {
@@ -54,6 +130,14 @@ function getAttributeValue(attr: string | AttributeValue | undefined): string {
 function renderCell(value: string | undefined) {
   const text = value && value.trim() ? value : "—";
   return <span className="cell-text" title={text}>{text}</span>;
+}
+
+function buildFinalizeEntry<S extends ItemSource>(item: ExtractedItem, source: S, fallback?: ExtractedItem): { item: ExtractedItem; source: S } {
+  const normalizedSize = item.size ?? fallback?.size;
+  return {
+    item: normalizedSize ? { ...item, size: normalizedSize } : { ...item },
+    source,
+  };
 }
 
 type ColumnResizeApi = {
@@ -496,35 +580,6 @@ function ExtractedItemsTable({ file }: { file: { fileName: string; items: Extrac
   );
 }
 
-function BoqItemsTable({ items }: { items: ExtractedItem[] }) {
-  const resize = useColumnResize();
-
-  return (
-    <div className="table-wrapper table-wrapper--no-x" style={{ marginTop: "0.75rem" }}>
-      <table className="matches-table resizable-table">
-        <thead>
-          <tr>
-            <ResizableTh resize={resize} index={0} className="boq-col-description">Description</ResizableTh>
-            <ResizableTh resize={resize} index={1}>Size</ResizableTh>
-            <ResizableTh resize={resize} index={2}>Quantity</ResizableTh>
-            <ResizableTh resize={resize} index={3} className="boq-col-unit">Unit</ResizableTh>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item, idx) => (
-            <tr key={`boq-${item.item_number || idx}`} className="matches-table__row">
-              <td className="boq-col-description">{renderCell(item.description || item.full_description)}</td>
-              <td>{renderCell(item.size)}</td>
-              <td>{renderCell(item.quantity)}</td>
-              <td className="boq-col-unit">{renderCell(item.unit)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function EditableItemsTable({
   items,
   onChange,
@@ -551,6 +606,7 @@ function EditableItemsTable({
         <thead>
           <tr>
             <th className="finalize-col finalize-col--description">Description</th>
+            <th className="finalize-col finalize-col--capacity">Capacity</th>
             <th className="finalize-col finalize-col--size">Size</th>
             <th className="finalize-col finalize-col--qty">Quantity</th>
             <th className="finalize-col finalize-col--unit">Unit</th>
@@ -567,6 +623,14 @@ function EditableItemsTable({
                   onChange={(e) => handleChange(idx, "description", e.target.value)}
                   placeholder="Description"
                   rows={1}
+                />
+              </td>
+              <td className="finalize-col finalize-col--capacity">
+                <input
+                  className="form-input form-input--table"
+                  value={item.item.capacity || ""}
+                  onChange={(e) => handleChange(idx, "capacity", e.target.value)}
+                  placeholder="Capacity"
                 />
               </td>
               <td className="finalize-col finalize-col--size">
@@ -661,7 +725,181 @@ function App() {
   const [finalizeItems, setFinalizeItems] = useState<Array<{ item: ExtractedItem; source: ItemSource }>>([]);
   const [comparisonSelections, setComparisonSelections] = useState<Record<number, "drawing" | "boq" | "">>({});
   const [comparisonChecked, setComparisonChecked] = useState<Record<number, boolean>>({});
-  const [pricingSelections, setPricingSelections] = useState<Array<{ source: "drawing" | "boq"; item: ExtractedItem }>>([]);
+  const [pricingSelections, setPricingSelections] = useState<Array<{ source: ItemSource; item: ExtractedItem }>>([]);
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingStatus, setPricingStatus] = useState<string>("");
+  const [pricingMatchOptions, setPricingMatchOptions] = useState<Record<number, PriceMapping[]>>({});
+  const [pricingMatchChoice, setPricingMatchChoice] = useState<Record<number, number>>({});
+  const pricingSelectRefs = useRef<Record<number, HTMLSelectElement | null>>({});
+  const pricingTriggerRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+  const pricingDropdownRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const [pricingDropdownPos, setPricingDropdownPos] = useState<
+    Record<number, { top: number; left: number; width: number }>
+  >({});
+  const [pricingDropdownOpen, setPricingDropdownOpen] = useState<Record<number, boolean>>({});
+  const [priceList, setPriceList] = useState<PriceListRow[]>([]);
+  const [priceListLoading, setPriceListLoading] = useState(false);
+  const [priceListError, setPriceListError] = useState("");
+  const [priceListSearch, setPriceListSearch] = useState<Record<number, string>>({});
+  const [atgRow, setAtgRow] = useState<{
+    description: string;
+    qty: string;
+    unit: string;
+    unitPrice: string;
+    totalPrice: string;
+    unitManhour: string;
+    totalManhour: string;
+  }>(() => buildDefaultAtgRow());
+  const [atgLoading, setAtgLoading] = useState(false);
+  const [atgError, setAtgError] = useState<string>("");
+  const [electricalRow, setElectricalRow] = useState<{
+    description: string;
+    qty: string;
+    unit: string;
+    unitPrice: string;
+    totalPrice: string;
+    unitManhour: string;
+    totalManhour: string;
+  }>(() => buildDefaultElectricalRow());
+  const [electricalLoading, setElectricalLoading] = useState(false);
+  const [electricalError, setElectricalError] = useState<string>("");
+  const [electricalModalOpen, setElectricalModalOpen] = useState(false);
+  const [electricalInputs, setElectricalInputs] = useState<Record<string, string>>(buildDefaultElectricalInputs);
+  const [installationInputs, setInstallationInputs] = useState<InstallationInputs>({
+    workers: "0",
+    engineers: "0",
+    supervisors: "0",
+    location: "riyadh",
+  });
+
+  const getMatchLabel = useCallback((match?: PriceMapping) => {
+    if (!match) return "Select price";
+    const row = (match.price_row || {}) as Record<string, string | number>;
+    return (
+      (row["Item"] as string) ||
+      (row["Name"] as string) ||
+      (row["Description"] as string) ||
+      `Match ${match.price_list_index + 1}`
+    );
+  }, []);
+
+  const getPriceListItemLabel = useCallback((row?: PriceListRow) => {
+    if (!row) return "";
+    const itemValue = row["Item"] ?? row["item"];
+    if (itemValue !== undefined && itemValue !== null && itemValue !== "") {
+      return String(itemValue);
+    }
+    const keys = Object.keys(row);
+    const fallbackKey = keys[1] ?? keys[0];
+    return fallbackKey ? String(row[fallbackKey] ?? "") : "";
+  }, []);
+
+  const openMatchDropdown = (rowIdx: number) => {
+    setPricingDropdownOpen((prev) => {
+      const nextOpen = !prev[rowIdx];
+      const trigger = pricingTriggerRefs.current[rowIdx];
+      if (nextOpen && trigger) {
+        const rect = trigger.getBoundingClientRect();
+        const left = Math.min(rect.left, Math.max(8, window.innerWidth - 360));
+        const width = rect.width;
+        const top = rect.top + rect.height + 6;
+        setPricingDropdownPos((pos) => ({
+          ...pos,
+          [rowIdx]: { top, left, width },
+        }));
+      }
+      const sel = pricingSelectRefs.current[rowIdx];
+      if (nextOpen && sel) {
+        requestAnimationFrame(() => {
+          sel.focus();
+          if (typeof (sel as any).showPicker === "function") {
+            (sel as any).showPicker();
+          } else {
+            sel.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+            sel.click();
+          }
+        });
+      }
+      return { ...prev, [rowIdx]: nextOpen };
+    });
+  };
+  const closeMatchDropdown = useCallback((rowIdx?: number) => {
+    if (rowIdx === undefined) {
+      setPricingDropdownOpen({});
+      return;
+    }
+    setPricingDropdownOpen((prev) => ({ ...prev, [rowIdx]: false }));
+  }, []);
+
+  const indexedPriceList = useMemo(
+    () => priceList.map((row, idx) => ({ row, rowIndex: idx })),
+    [priceList]
+  );
+
+  const findPriceListMatches = useCallback(
+    (query: string) => {
+      const trimmed = query.trim();
+      if (trimmed.length < 3) return [];
+      const lower = trimmed.toLowerCase();
+      return indexedPriceList.filter(({ row }) => {
+        const label = getPriceListItemLabel(row);
+        return label && label.toLowerCase().includes(lower);
+      });
+    },
+    [getPriceListItemLabel, indexedPriceList]
+  );
+
+  const applyPriceMappingToRow = (rowIdx: number, mapping: PriceMapping) => {
+    const row = mapping.price_row as Record<string, string | number> | undefined;
+    const rowPrice = pickFieldFromRow(row, [/price/i]);
+    const rowMh = pickFieldFromRow(row, [/manhour/i, /mh/i]);
+    setPricingSelections(prev => {
+      const next = [...prev];
+      if (!next[rowIdx]) return prev;
+      const nextUnitPrice =
+        mapping.unit_price !== undefined ? String(mapping.unit_price) : rowPrice ?? next[rowIdx].item.unit_price;
+      const nextUnitMh =
+        mapping.unit_manhour !== undefined ? String(mapping.unit_manhour) : rowMh ?? next[rowIdx].item.unit_manhour;
+      const quantity = next[rowIdx].item.quantity;
+      next[rowIdx] = {
+        ...next[rowIdx],
+        item: {
+          ...next[rowIdx].item,
+          unit_price: nextUnitPrice,
+          unit_manhour: nextUnitMh,
+          total_price: computeTotalPrice(nextUnitPrice, quantity),
+          total_manhour: computeTotalValue(nextUnitMh, quantity),
+        },
+      };
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const handleOutsideInteraction = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      const openRows = Object.entries(pricingDropdownOpen)
+        .filter(([, isOpen]) => isOpen)
+        .map(([idx]) => Number(idx));
+      if (!openRows.length) return;
+
+      const clickedOutside = openRows.some((rowIdx) => {
+        const container = pricingDropdownRefs.current[rowIdx];
+        return container && !container.contains(target);
+      });
+
+      if (clickedOutside) {
+        closeMatchDropdown();
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideInteraction);
+    document.addEventListener("touchstart", handleOutsideInteraction);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideInteraction);
+      document.removeEventListener("touchstart", handleOutsideInteraction);
+    };
+  }, [pricingDropdownOpen, closeMatchDropdown]);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>("");
   const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -672,9 +910,12 @@ function App() {
   const [loadingDraft, setLoadingDraft] = useState(false);
   const hydratingDraftRef = useRef(false);
   const boqFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedDrawingRows, setSelectedDrawingRows] = useState<Record<string, boolean>>({});
+  const [selectedBoqRows, setSelectedBoqRows] = useState<Record<string, boolean>>({});
   const kbResize = useColumnResize();
   const comparisonResize = useColumnResize();
   const pricingResize = useColumnResize();
+  const [activePricingSection, setActivePricingSection] = useState<PricingAccordionId | null>("items");
   const compareMessages = [
     "Reading BOQ…",
     "Extracting BOQ items…",
@@ -682,6 +923,22 @@ function App() {
     "Finalizing comparison…"
   ];
   const [compareStage, setCompareStage] = useState(0);
+
+  useEffect(() => {
+    if (activePage !== "new-estimate" || activeEstimateStep !== "pricing") return;
+    if (priceList.length || priceListLoading) return;
+    setPriceListLoading(true);
+    setPriceListError("");
+    fetchPriceList()
+      .then(({ data }) => {
+        setPriceList(data || []);
+      })
+      .catch((error) => {
+        console.error("Failed to load price list", error);
+        setPriceListError((error as Error).message || "Failed to load price list.");
+      })
+      .finally(() => setPriceListLoading(false));
+  }, [activeEstimateStep, activePage, priceList.length, priceListLoading]);
 
   const hasDraftContent = useMemo(() => {
     return (
@@ -692,6 +949,8 @@ function App() {
       pricingSelections.length > 0 ||
       Object.keys(comparisonSelections).length > 0 ||
       Object.keys(comparisonChecked).length > 0 ||
+      Object.keys(selectedDrawingRows).length > 0 ||
+      Object.keys(selectedBoqRows).length > 0 ||
       Boolean(selectedBoqFileName)
     );
   }, [
@@ -701,6 +960,8 @@ function App() {
     pricingSelections,
     comparisonSelections,
     comparisonChecked,
+    selectedDrawingRows,
+    selectedBoqRows,
     selectedBoqFileName,
   ]);
 
@@ -712,9 +973,17 @@ function App() {
       boqResults,
       comparisonSelections,
       comparisonChecked,
+      selectedDrawingRows,
+      selectedBoqRows,
       finalizeItems,
-      pricingSelections,
+      pricingSelections: pricingSelections as DraftEstimateState["pricingSelections"],
+      pricingMatchOptions,
+      pricingMatchChoice,
       selectedBoqFileName,
+      atgRow,
+      electricalRow,
+      electricalInputs,
+      installationInputs,
     };
   }, [
     activeEstimateStep,
@@ -723,9 +992,17 @@ function App() {
     boqResults,
     comparisonSelections,
     comparisonChecked,
+    selectedDrawingRows,
+    selectedBoqRows,
     finalizeItems,
     pricingSelections,
+    pricingMatchOptions,
+    pricingMatchChoice,
     selectedBoqFileName,
+    atgRow,
+    electricalRow,
+    electricalInputs,
+    installationInputs,
   ]);
 
   const persistDraft = useCallback(async (): Promise<boolean> => {
@@ -871,11 +1148,28 @@ function App() {
     setComparisonSelections({});
     setComparisonChecked({});
     setPricingSelections([]);
+    setActivePricingSection("items");
+    setAtgRow(buildDefaultAtgRow());
+    setAtgLoading(false);
+    setAtgError("");
+    setElectricalRow(buildDefaultElectricalRow());
+    setElectricalInputs(buildDefaultElectricalInputs());
+    setElectricalLoading(false);
+    setElectricalError("");
+    setElectricalModalOpen(false);
+    setSelectedDrawingRows({});
+    setSelectedBoqRows({});
     setFeedback("");
     setDraftId(null);
     setDraftName("");
     setDraftStatus("idle");
     setLastDraftSavedAt(null);
+    setInstallationInputs({
+      workers: "0",
+      engineers: "0",
+      supervisors: "0",
+      location: "riyadh",
+    });
   }, []);
 
   const handleStartNewEstimate = () => {
@@ -905,14 +1199,46 @@ function App() {
       setActiveEstimateStep(state.activeEstimateStep || "review");
       setReviewStepActive(state.reviewStepActive ?? true);
       setExtractedFiles(state.extractedFiles || []);
-      setBoqResults(
-        state.boqResults || { boqItems: [], comparisons: [] }
-      );
+      setBoqResults(state.boqResults || { boqItems: [], comparisons: [] });
       setComparisonSelections(toNumberRecord(state.comparisonSelections));
       setComparisonChecked(toNumberRecord(state.comparisonChecked));
       setFinalizeItems(state.finalizeItems || []);
       setPricingSelections(state.pricingSelections || []);
+      setPricingMatchOptions(state.pricingMatchOptions || {});
+      setPricingMatchChoice(toNumberRecord(state.pricingMatchChoice));
       setSelectedBoqFileName(state.selectedBoqFileName || "");
+      if (state.atgRow) {
+        setAtgRow(state.atgRow);
+      }
+      if (state.electricalRow) {
+        setElectricalRow(state.electricalRow);
+      }
+      if (state.electricalInputs) {
+        setElectricalInputs(state.electricalInputs);
+      }
+      if (state.installationInputs) {
+        setInstallationInputs(state.installationInputs);
+      }
+      const defaultDrawingSelection: Record<string, boolean> = {};
+      (state.extractedFiles || []).forEach((file, fileIdx) =>
+        (file.items || []).forEach((_, itemIdx) => {
+          defaultDrawingSelection[`d-${fileIdx}-${itemIdx}`] = true;
+        })
+      );
+      const defaultBoqSelection: Record<string, boolean> = {};
+      (state.boqResults?.boqItems || []).forEach((_, idx) => {
+        defaultBoqSelection[`b-${idx}`] = true;
+      });
+      setSelectedDrawingRows(
+        state.selectedDrawingRows && Object.keys(state.selectedDrawingRows).length > 0
+          ? state.selectedDrawingRows
+          : defaultDrawingSelection
+      );
+      setSelectedBoqRows(
+        state.selectedBoqRows && Object.keys(state.selectedBoqRows).length > 0
+          ? state.selectedBoqRows
+          : defaultBoqSelection
+      );
       setPendingBoqFile(null);
       setMatchingFiles([]);
       setDraftId(draft.id);
@@ -951,6 +1277,8 @@ function App() {
       setExtractedFiles([]);
       setLoadingStage(0);
     }
+    setSelectedDrawingRows({});
+    setSelectedBoqRows({});
 
     let stageInterval: ReturnType<typeof setInterval> | null = null;
     if (hasDrawings) {
@@ -967,7 +1295,15 @@ function App() {
       if (hasDrawings) {
         const payload = await extractEstimates(matchingFiles);
         if (stageInterval) clearInterval(stageInterval);
-        setExtractedFiles(payload.files ?? []);
+        const files = payload.files ?? [];
+        setExtractedFiles(files);
+        const drawingSelection: Record<string, boolean> = {};
+        files.forEach((file, fileIdx) =>
+          (file.items || []).forEach((_, itemIdx) => {
+            drawingSelection[`d-${fileIdx}-${itemIdx}`] = true;
+          })
+        );
+        setSelectedDrawingRows(drawingSelection);
         setMatchingFiles([]);
         drawingsSucceeded = !!(payload.files && payload.files.length > 0);
         const message = drawingsSucceeded ? "Drawings extracted." : "No drawing items returned.";
@@ -980,7 +1316,13 @@ function App() {
         setBoqExtractLoading(true);
         try {
           const extractResp = await extractBoq(pendingBoqFile);
-          setBoqResults({ boqItems: extractResp.boqItems || [], comparisons: [] });
+          const boqItems = extractResp.boqItems || [];
+          setBoqResults({ boqItems, comparisons: [] });
+          const boqSelection: Record<string, boolean> = {};
+          boqItems.forEach((_, idx) => {
+            boqSelection[`b-${idx}`] = true;
+          });
+          setSelectedBoqRows(boqSelection);
           boqSucceeded = !!(extractResp.boqItems && extractResp.boqItems.length > 0);
           const msg = boqSucceeded ? "BOQ extracted." : "No BOQ items were parsed from this file.";
           setFeedback(msg);
@@ -1054,7 +1396,9 @@ function App() {
           ? "Select the Items to include in the Estimate"
           : activePage === "new-estimate" && activeEstimateStep === "finalize"
             ? "Finalize the items before moving to Pricing"
-            : "Upload Drawings and BOQ to start the Estimation";
+            : activePage === "new-estimate" && activeEstimateStep === "pricing"
+              ? "Finalize the Pricing for Items, Electrical, ATG and Installation"
+              : "Upload Drawings and BOQ to start the Estimation";
 
   const handleBoqFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1067,19 +1411,126 @@ function App() {
   };
 
   const getComparisonClass = (status: string) => {
-    if (status === "match_exact") return "compare-row--ok";
-    if (status === "match_quantity_diff" || status === "match_unit_diff") return "compare-row--warn";
-    if (status === "missing_in_boq" || status === "missing_in_drawing") return "compare-row--missing";
+    const okStatuses = new Set(["match_exact", "exact_match", "match", "matched"]);
+    const warnStatuses = new Set(["match_quantity_diff", "match_unit_diff", "partial_match"]);
+    const missingStatuses = new Set(["missing_in_boq", "missing_in_drawing", "no_match"]);
+    if (okStatuses.has(status)) return "compare-row--ok";
+    if (warnStatuses.has(status)) return "compare-row--warn";
+    if (missingStatuses.has(status)) return "compare-row--missing";
     return "";
   };
 
-  const drawingItemsFlat = useMemo(
-    () => extractedFiles.flatMap((f) => f.items || []),
+  const buildDrawingRowKey = (fileIdx: number, itemIdx: number) => `d-${fileIdx}-${itemIdx}`;
+  const buildBoqRowKey = (itemIdx: number) => `b-${itemIdx}`;
+
+  const drawingReviewRows = useMemo(
+    () =>
+      extractedFiles.flatMap((file, fileIdx) =>
+        (file.items || []).map((item, itemIdx) => ({
+          item,
+          fileIdx,
+          itemIdx,
+          fileName: file.fileName,
+          key: buildDrawingRowKey(fileIdx, itemIdx),
+        }))
+      ),
     [extractedFiles]
   );
 
-  const hasDrawingData = drawingItemsFlat.length > 0;
-  const hasBoqData = boqResults.boqItems.length > 0;
+  const boqReviewRows = useMemo(
+    () =>
+      (boqResults.boqItems || []).map((item, itemIdx) => ({
+        item,
+        itemIdx,
+        key: buildBoqRowKey(itemIdx),
+      })),
+    [boqResults]
+  );
+
+  const drawingSelectedCount = useMemo(
+    () => drawingReviewRows.reduce((count, row) => count + (selectedDrawingRows[row.key] ? 1 : 0), 0),
+    [drawingReviewRows, selectedDrawingRows]
+  );
+
+  const boqSelectedCount = useMemo(
+    () => boqReviewRows.reduce((count, row) => count + (selectedBoqRows[row.key] ? 1 : 0), 0),
+    [boqReviewRows, selectedBoqRows]
+  );
+
+  const setAllDrawingSelection = useCallback(
+    (checked: boolean) => {
+      const next: Record<string, boolean> = {};
+      drawingReviewRows.forEach(row => {
+        next[row.key] = checked;
+      });
+      setSelectedDrawingRows(next);
+    },
+    [drawingReviewRows]
+  );
+
+  const setAllBoqSelection = useCallback(
+    (checked: boolean) => {
+      const next: Record<string, boolean> = {};
+      boqReviewRows.forEach(row => {
+        next[row.key] = checked;
+      });
+      setSelectedBoqRows(next);
+    },
+    [boqReviewRows]
+  );
+
+  const hasDrawingData = drawingReviewRows.length > 0;
+  const hasBoqData = boqReviewRows.length > 0;
+
+  const getSelectedDrawingItems = useCallback(
+    () => {
+      const picked = drawingReviewRows.filter(row => selectedDrawingRows[row.key]).map(row => row.item);
+      return picked.length ? picked : drawingReviewRows.map(row => row.item);
+    },
+    [drawingReviewRows, selectedDrawingRows]
+  );
+
+  const getSelectedBoqItems = useCallback(
+    () => {
+      const picked = boqReviewRows.filter(row => selectedBoqRows[row.key]).map(row => row.item);
+      return picked.length ? picked : boqReviewRows.map(row => row.item);
+    },
+    [boqReviewRows, selectedBoqRows]
+  );
+
+  const updateDrawingItemField = useCallback(
+    (fileIdx: number, itemIdx: number, field: keyof ExtractedItem, value: string) => {
+      setExtractedFiles(prev => {
+        if (!prev[fileIdx]) return prev;
+        const next = [...prev];
+        const file = next[fileIdx];
+        const items = [...(file.items || [])];
+        items[itemIdx] = { ...items[itemIdx], [field]: value };
+        next[fileIdx] = { ...file, items };
+        return next;
+      });
+      // Edited data invalidates previous comparisons
+      setBoqResults(prev => ({ ...prev, comparisons: [] }));
+      setComparisonSelections({});
+      setComparisonChecked({});
+    },
+    []
+  );
+
+  const updateBoqItemField = useCallback(
+    (itemIdx: number, field: keyof ExtractedItem, value: string) => {
+      setBoqResults(prev => {
+        const items = [...(prev.boqItems || [])];
+        if (!items[itemIdx]) return prev;
+        items[itemIdx] = { ...items[itemIdx], [field]: value };
+        return { ...prev, boqItems: items, comparisons: [] };
+      });
+      setComparisonSelections({});
+      setComparisonChecked({});
+    },
+    []
+  );
+
   const hasAnyComparisonChecked = useMemo(
     () => boqResults.comparisons.some((_, idx) => comparisonChecked[idx]),
     [boqResults.comparisons, comparisonChecked]
@@ -1112,10 +1563,184 @@ function App() {
         return boqResults.comparisons.length > 0;
       case "finalize":
         return finalizeItems.length > 0 || activeEstimateStep === "finalize";
+      case "pricing":
+        return pricingSelections.length > 0 || finalizeItems.length > 0 || activeEstimateStep === "pricing";
       default:
         return false;
     }
   };
+
+  const computeTotalPrice = (unitPrice: string | number | undefined, quantity: string | undefined) => {
+    const qty = Number(quantity ?? "0");
+    const price = Number(unitPrice ?? "0");
+    if (!Number.isFinite(qty) || !Number.isFinite(price)) return "";
+    return (price * qty).toFixed(2);
+  };
+
+  const computeTotalValue = (unitValue: string | number | undefined, quantity: string | undefined) => {
+    const qty = Number(quantity ?? "0");
+    const value = Number(unitValue ?? "0");
+    if (!Number.isFinite(qty) || !Number.isFinite(value)) return "";
+    return (value * qty).toFixed(2);
+  };
+
+  const parseNumeric = (value: string | number | undefined) => {
+    if (value === undefined || value === null) return 0;
+    const normalised = typeof value === "string" ? value.replace(/,/g, "") : value;
+    const num = Number(normalised);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const formatNumber = (value: number) => {
+    return Number.isFinite(value)
+      ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : "—";
+  };
+
+  const totalManhour = useMemo(() => {
+    // Total manhour = items (items accordion) + ATG + Electrical
+    const itemsMh = pricingSelections.reduce((sum, entry) => {
+      return sum + parseNumeric(entry.item.total_manhour);
+    }, 0);
+    const atgMh = parseNumeric(atgRow.totalManhour);
+    const electricalMh = parseNumeric(electricalRow.totalManhour);
+    return itemsMh + atgMh + electricalMh;
+  }, [pricingSelections, atgRow.totalManhour, electricalRow.totalManhour]);
+
+  const installationTotals = useMemo(() => {
+    const workers = parseNumeric(installationInputs.workers);
+    const engineers = parseNumeric(installationInputs.engineers);
+    const supervisors = parseNumeric(installationInputs.supervisors);
+    const totalWorkers = workers + engineers + supervisors;
+
+    const monthlyRiyadh = 3800 * workers + 15750 * engineers + 9000 * supervisors + 2000;
+    const monthlyRemote = 5850 * workers + 14600 * engineers + 8600 * supervisors + 4000;
+
+    const weeklyRiyadh = monthlyRiyadh / 4;
+    const weeklyRemote = monthlyRemote / 4;
+
+    const projectPeriod =
+      workers > 0
+        ? (totalManhour / workers / 8 / 6) * 1.2
+        : 0;
+
+    const manpowerRiyadh = weeklyRiyadh * projectPeriod;
+    const manpowerRemote = weeklyRemote * projectPeriod;
+
+    const profitRiyadh = manpowerRiyadh * 0.4;
+    const profitRemote = manpowerRemote * 0.4;
+
+    const riskRiyadh = manpowerRiyadh * 0.15;
+    const riskRemote = manpowerRemote * 0.15;
+
+    const priceRiyadh = manpowerRiyadh + profitRiyadh + riskRiyadh;
+    const priceRemote = manpowerRemote + profitRemote + riskRemote;
+
+    return {
+      workers,
+      engineers,
+      supervisors,
+      totalWorkers,
+      monthlyRiyadh,
+      monthlyRemote,
+      weeklyRiyadh,
+      weeklyRemote,
+      projectPeriod,
+      manpowerRiyadh,
+      manpowerRemote,
+      profitRiyadh,
+      profitRemote,
+      riskRiyadh,
+      riskRemote,
+      priceRiyadh,
+      priceRemote,
+    };
+  }, [installationInputs, totalManhour]);
+  const isRemoteLocation = installationInputs.location === "remote";
+  const installationFieldStyle: React.CSSProperties = {
+    flex: "1 1 200px",
+    minWidth: "180px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.25rem",
+  };
+
+  const pickFieldFromRow = (
+    row: Record<string, string | number> | undefined,
+    patterns: RegExp[]
+  ): string | undefined => {
+    if (!row) return undefined;
+    for (const [key, value] of Object.entries(row)) {
+      if (patterns.some((re) => re.test(key))) {
+        return typeof value === "number" ? value.toString() : String(value);
+      }
+    }
+    return undefined;
+  };
+
+  const runPriceMapping = async (selections: Array<{ source: ItemSource; item: ExtractedItem }>) => {
+    if (!selections.length) return;
+    setPricingLoading(true);
+    setPricingStatus("Matching items to price list with AI…");
+    try {
+      const resp = await priceMap(selections.map(s => s.item));
+      console.log("priceMap response", resp);
+      setPricingStatus("Applying matched prices and manhours…");
+      if (resp?.mappings?.length) {
+        const grouped = resp.mappings.reduce<Record<number, PriceMapping[]>>((acc, mapping) => {
+          if (mapping.item_index === undefined || mapping.item_index === null) return acc;
+          if (!acc[mapping.item_index]) acc[mapping.item_index] = [];
+          const exists = acc[mapping.item_index].some(
+            (m) => m.price_list_index === mapping.price_list_index
+          );
+          if (!exists) {
+            acc[mapping.item_index].push(mapping);
+          }
+          return acc;
+        }, {});
+        setPricingMatchOptions(grouped);
+        const defaultChoices: Record<number, number> = {};
+        Object.keys(grouped).forEach((key) => {
+          defaultChoices[Number(key)] = 0;
+        });
+        setPricingMatchChoice(defaultChoices);
+        setPricingSelections(prev => {
+          return prev.map((entry, idx) => {
+            const match = grouped[idx]?.[0];
+            if (!match) return entry;
+            const row = match.price_row as Record<string, string | number> | undefined;
+            const rowPrice = pickFieldFromRow(row, [/price/i]);
+            const rowMh = pickFieldFromRow(row, [/manhour/i, /mh/i]);
+            const nextUnitPrice =
+              match.unit_price !== undefined ? String(match.unit_price) : rowPrice ?? entry.item.unit_price;
+            const nextUnitMh =
+              match.unit_manhour !== undefined ? String(match.unit_manhour) : rowMh ?? entry.item.unit_manhour;
+            return {
+              ...entry,
+              item: {
+                ...entry.item,
+                unit_price: nextUnitPrice,
+                unit_manhour: nextUnitMh,
+                total_price: computeTotalPrice(nextUnitPrice, entry.item.quantity),
+                total_manhour: computeTotalValue(nextUnitMh, entry.item.quantity),
+              },
+            };
+          });
+        });
+        setPricingStatus("Pricing data filled for matched items.");
+      } else {
+        setPricingStatus("No price list matches returned.");
+      }
+    } catch (error) {
+      console.error("price map failed", error);
+      setFeedback((error as Error).message || "Failed to map prices.");
+      setTimeout(() => setFeedback(""), 3500);
+    } finally {
+      setTimeout(() => setPricingStatus(""), 2000);
+      setPricingLoading(false);
+    }
+  };
+
 
   const handleStepChange = (stepId: EstimateStep) => {
     if (stepId === activeEstimateStep) return;
@@ -1127,18 +1752,201 @@ function App() {
     setActiveEstimateStep(stepId);
   };
 
-  const handleProceedFromReview = async () => {
-    if (hasDrawingData && hasBoqData) {
-      await handleRunCompare();
+  const handleGoToPricing = () => {
+    if (finalizeItems.length === 0) {
+      setFeedback("Add items before going to pricing.");
+      setTimeout(() => setFeedback(""), 2500);
       return;
     }
-    const sourceItems = hasDrawingData ? drawingItemsFlat : boqResults.boqItems;
-    setFinalizeItems(sourceItems.map(item => ({ item, source: hasDrawingData ? "drawing" : "boq" })));
+    const nextSelections = finalizeItems.map((entry) => ({ item: entry.item, source: entry.source }));
+    setPricingSelections(nextSelections);
+    setActiveEstimateStep("pricing");
+    void runPriceMapping(nextSelections);
+  };
+
+  const handlePricingItemChange = (idx: number, field: keyof ExtractedItem, value: string) => {
+    setPricingSelections(prev => {
+      const next = [...prev];
+      if (!next[idx]) return prev;
+      const updatedItem = { ...next[idx].item, [field]: value };
+      if (field === "unit_price" || field === "quantity") {
+        updatedItem.total_price = computeTotalPrice(updatedItem.unit_price, updatedItem.quantity);
+      }
+      if (field === "unit_manhour" || field === "quantity") {
+        updatedItem.total_manhour = computeTotalValue(updatedItem.unit_manhour, updatedItem.quantity);
+      }
+      next[idx] = { ...next[idx], item: updatedItem };
+      return next;
+    });
+  };
+
+  const handleInstallationChange = (field: keyof InstallationInputs, value: string) => {
+    setInstallationInputs(prev => ({
+      ...prev,
+      [field]: field === "location" ? (value as InstallationLocation) : value,
+    }));
+  };
+
+  const normaliseNumericValue = (value: number | string | undefined) => {
+    if (value === undefined || value === null) return "";
+    return typeof value === "number" ? value.toString() : String(value);
+  };
+
+  const handleFetchAtgData = async () => {
+    setAtgLoading(true);
+    setAtgError("");
+    try {
+      const data: AtgTotals = await fetchAtgTotals();
+      const unitPrice = normaliseNumericValue(data.totalSellingPrice);
+      const unitManhour = normaliseNumericValue(data.totalManhour);
+      setAtgRow(prev => {
+        const qty = prev.qty || "1";
+        return {
+          description: "ATG System",
+          unit: "Lot",
+          qty,
+          unitPrice,
+          totalPrice: computeTotalPrice(unitPrice, qty),
+          unitManhour,
+          totalManhour: computeTotalValue(unitManhour, qty),
+        };
+      });
+    } catch (error) {
+      console.error("Failed to load ATG data", error);
+      setAtgError((error as Error).message || "Failed to load ATG data.");
+    } finally {
+      setAtgLoading(false);
+    }
+  };
+
+  const handleAtgQtyChange = (value: string) => {
+    setAtgRow(prev => {
+      const qty = value;
+      return {
+        ...prev,
+        qty,
+        totalPrice: computeTotalPrice(prev.unitPrice, qty),
+        totalManhour: computeTotalValue(prev.unitManhour, qty),
+      };
+    });
+  };
+
+  const handleFetchElectricalData = async () => {
+    setElectricalLoading(true);
+    setElectricalError("");
+    try {
+      const payload: ElectricalCalcRequest = {
+        a2: Number(electricalInputs["a2"] ?? 0) || 0,
+        x: Number(electricalInputs["x"] ?? 0) || 0,
+        y: Number(electricalInputs["y"] ?? 0) || 0,
+        z: Number(electricalInputs["z"] ?? 0) || 0,
+        cValues: Array.from({ length: 21 }).map((_, idx) => {
+          const key = `c${5 + idx}`;
+          const val = Number(electricalInputs[key] ?? 0);
+          return Number.isFinite(val) ? val : 0;
+        }),
+      };
+      const data = await calculateElectrical(payload);
+      const unitPrice = normaliseNumericValue(data.totalPrice);
+      const unitManhour = normaliseNumericValue(data.totalManhours);
+      setElectricalRow(prev => {
+        const qty = prev.qty || "1";
+        return {
+          description: "Electrical System",
+          unit: "Lot",
+          qty,
+          unitPrice,
+          totalPrice: computeTotalPrice(unitPrice, qty),
+          unitManhour,
+          totalManhour: computeTotalValue(unitManhour, qty),
+        };
+      });
+      setElectricalModalOpen(false);
+    } catch (error) {
+      console.error("Failed to load Electrical data", error);
+      setElectricalError((error as Error).message || "Failed to load Electrical data.");
+    } finally {
+      setElectricalLoading(false);
+    }
+  };
+
+  const handleElectricalQtyChange = (value: string) => {
+    setElectricalRow(prev => {
+      const qty = value;
+      return {
+        ...prev,
+        qty,
+        totalPrice: computeTotalPrice(prev.unitPrice, qty),
+        totalManhour: computeTotalValue(prev.unitManhour, qty),
+      };
+    });
+  };
+
+  const handlePriceListSearchChange = (rowIdx: number, query: string) => {
+    setPriceListSearch(prev => ({ ...prev, [rowIdx]: query }));
+  };
+
+  const handleApplyPriceListRow = (rowIdx: number, priceListIndex: number) => {
+    const row = priceList[priceListIndex];
+    if (!row) return;
+    const mapping: PriceMapping = {
+      item_index: rowIdx,
+      price_list_index: priceListIndex,
+      price_row: row,
+    };
+    let nextChoice = 0;
+    setPricingMatchOptions(prev => {
+      const existing = prev[rowIdx] || [];
+      const foundIdx = existing.findIndex(m => m.price_list_index === priceListIndex);
+      if (foundIdx >= 0) {
+        nextChoice = foundIdx;
+        return prev;
+      }
+      nextChoice = existing.length;
+      return { ...prev, [rowIdx]: [...existing, mapping] };
+    });
+    setPricingMatchChoice(prev => ({ ...prev, [rowIdx]: nextChoice }));
+    applyPriceMappingToRow(rowIdx, mapping);
+    setPriceListSearch(prev => ({ ...prev, [rowIdx]: "" }));
+    setPricingDropdownOpen((prev) => ({ ...prev, [rowIdx]: false }));
+  };
+
+  const handlePricingMatchChange = (rowIdx: number, optionIdx: number) => {
+    const options = pricingMatchOptions[rowIdx];
+    if (!options || !options[optionIdx]) return;
+    setPricingMatchChoice((prev) => ({ ...prev, [rowIdx]: optionIdx }));
+    const match = options[optionIdx];
+    applyPriceMappingToRow(rowIdx, match);
+  };
+
+  const handleProceedFromReview = async () => {
+    const drawingSelection = hasDrawingData ? getSelectedDrawingItems() : [];
+    const boqSelection = hasBoqData ? getSelectedBoqItems() : [];
+
+    if (hasDrawingData && hasBoqData) {
+      await handleRunCompare(drawingSelection, boqSelection);
+      return;
+    }
+    const sourceItems = hasDrawingData ? drawingSelection : boqSelection;
+    const source: ItemSource = hasDrawingData ? "drawing" : "boq";
+    setFinalizeItems(sourceItems.map(item => buildFinalizeEntry(item, source)));
     setActiveEstimateStep("finalize");
   };
 
-  const handleRunCompare = async () => {
-    if (!hasDrawingData || !hasBoqData) return;
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (electricalModalOpen) {
+      document.body.classList.add("modal-open");
+    } else {
+      document.body.classList.remove("modal-open");
+    }
+    return () => document.body.classList.remove("modal-open");
+  }, [electricalModalOpen]);
+
+  const handleRunCompare = async (drawingItemsParam?: ExtractedItem[], boqItemsParam?: ExtractedItem[]) => {
+    const drawingItems = drawingItemsParam ?? getSelectedDrawingItems();
+    const boqItems = boqItemsParam ?? getSelectedBoqItems();
+    if (!drawingItems.length || !boqItems.length) return;
     setBoqCompareLoading(true);
     setCompareStage(0);
     const stageInterval = setInterval(() => {
@@ -1151,8 +1959,7 @@ function App() {
       });
     }, 2500);
     try {
-      const allItems = drawingItemsFlat;
-      const compareResp = await compareLists(allItems, boqResults.boqItems);
+      const compareResp = await compareLists(drawingItems, boqItems);
       const raw = compareResp.rawContent;
       let comparisons = compareResp.comparisons || [];
       if ((!comparisons || comparisons.length === 0) && raw) {
@@ -1274,6 +2081,61 @@ function App() {
           </div>
         )}
 
+        {electricalModalOpen && (
+          <div className="modal-backdrop">
+            <div className="modal">
+              <div className="modal__header">
+                <h3 className="modal__title">Electrical Variables</h3>
+                <button
+                  type="button"
+                  className="modal__close"
+                  aria-label="Close"
+                  onClick={() => setElectricalModalOpen(false)}
+                  disabled={electricalLoading}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="modal__body">
+                <div className="electrical-inputs-grid">
+                  {ELECTRICAL_INPUT_DEFAULTS
+                    .filter(item => item.key !== "a2")
+                    .map((item) => (
+                      <label key={item.key} className="electrical-input">
+                        <span className="electrical-input__label">{item.label}</span>
+                        <input
+                          className="form-input electrical-input__control"
+                          type="number"
+                          step="1"
+                          value={electricalInputs[item.key] ?? ""}
+                          onChange={(e) =>
+                            setElectricalInputs(prev => ({
+                              ...prev,
+                              [item.key]: e.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    ))}
+                </div>
+                {electricalError && (
+                  <div className="modal__error">{electricalError}</div>
+                )}
+              </div>
+              <div className="modal__footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleFetchElectricalData}
+                  disabled={electricalLoading}
+                >
+                  {electricalLoading ? "Calculating…" : "Calculate"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {boqCompareLoading && (
           <div className="processing-overlay" style={{ zIndex: 3500 }}>
             <div className="processing-indicator">
@@ -1290,6 +2152,20 @@ function App() {
                   </div>
                   <span className="progress-text">Step {compareStage + 1} of {compareMessages.length}</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {pricingLoading && (
+          <div className="processing-overlay" style={{ zIndex: 3600 }}>
+            <div className="processing-indicator">
+              <div className="processing-indicator__spinner">
+                <svg width="40" height="40" viewBox="0 0 40 40" className="spinner">
+                  <circle cx="20" cy="20" r="16" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="80" strokeDashoffset="20" strokeLinecap="round" />
+                </svg>
+              </div>
+              <div className="processing-indicator__text">
+                <p className="processing-indicator__message">{pricingStatus || "Getting pricing from AI…"}</p>
               </div>
             </div>
           </div>
@@ -1590,25 +2466,109 @@ function App() {
               {hasDrawingData && (
                 <div className="review-block">
                   <p className="eyebrow">Extracted Items from Drawings</p>
+                  <div className="table-toolbar">
+                    <span className="table-count">Selected {drawingSelectedCount} / {drawingReviewRows.length}</span>
+                    <div className="table-toolbar__actions">
+                      <button type="button" className="btn-ghost" onClick={() => setAllDrawingSelection(true)}>Check all</button>
+                      <button type="button" className="btn-ghost" onClick={() => setAllDrawingSelection(false)}>Uncheck all</button>
+                    </div>
+                  </div>
                   <div className="table-wrapper">
                     <table className="matches-table resizable-table">
                       <thead>
                         <tr>
+                          <th className="checkbox-col"></th>
                           <th>Description</th>
+                          <th>Capacity</th>
                           <th>Size</th>
                           <th>Quantity</th>
                           <th>Unit</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {drawingItemsFlat.map((item, idx) => (
-                          <tr key={`review-drawings-${idx}`} className="matches-table__row">
-                            <td>{renderCell(item.description || item.full_description)}</td>
-                            <td>{renderCell(item.size)}</td>
-                            <td>{renderCell(item.quantity)}</td>
-                            <td>{renderCell(item.unit)}</td>
-                          </tr>
-                        ))}
+                        {drawingReviewRows.map(({ item, fileIdx, itemIdx, key }) => {
+                          const isSelected = !!selectedDrawingRows[key];
+                          const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+                            const target = event.target as HTMLElement;
+                            if (target.closest("input, textarea, button, select")) return;
+                            setSelectedDrawingRows(prev => ({ ...prev, [key]: !prev[key] }));
+                          };
+                          return (
+                            <tr
+                              key={key}
+                              className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
+                              onClick={handleRowClick}
+                            >
+                              <td className="checkbox-col">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    const checked = e.target.checked;
+                                    setSelectedDrawingRows(prev => ({ ...prev, [key]: checked }));
+                                  }}
+                                />
+                              </td>
+                              <td className="finalize-col finalize-col--description">
+                                <textarea
+                                  className="form-input form-input--table finalize-textarea"
+                                  value={item.description || item.full_description || ""}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateDrawingItemField(fileIdx, itemIdx, "description", e.target.value);
+                                  }}
+                                  placeholder="Description"
+                                  rows={1}
+                                />
+                              </td>
+                              <td className="finalize-col finalize-col--capacity">
+                                <input
+                                  className="form-input form-input--table"
+                                  value={item.capacity || ""}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateDrawingItemField(fileIdx, itemIdx, "capacity", e.target.value);
+                                  }}
+                                  placeholder="Capacity"
+                                />
+                              </td>
+                              <td className="finalize-col finalize-col--size">
+                                <input
+                                  className="form-input form-input--table"
+                                  value={item.size || ""}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateDrawingItemField(fileIdx, itemIdx, "size", e.target.value);
+                                  }}
+                                  placeholder="Size"
+                                />
+                              </td>
+                              <td className="finalize-col finalize-col--qty">
+                                <input
+                                  className="form-input form-input--table"
+                                  value={item.quantity || ""}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateDrawingItemField(fileIdx, itemIdx, "quantity", e.target.value);
+                                  }}
+                                  placeholder="Qty"
+                                />
+                              </td>
+                              <td className="finalize-col finalize-col--unit">
+                                <input
+                                  className="form-input form-input--table"
+                                  value={item.unit || ""}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateDrawingItemField(fileIdx, itemIdx, "unit", e.target.value);
+                                  }}
+                                  placeholder="Unit"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1618,7 +2578,88 @@ function App() {
               {hasBoqData && (
                 <div className="review-block">
                   <p className="eyebrow">Extracted BOQ Items</p>
-                  <BoqItemsTable items={boqResults.boqItems} />
+                  <div className="table-toolbar">
+                    <span className="table-count">Selected {boqSelectedCount} / {boqReviewRows.length}</span>
+                    <div className="table-toolbar__actions">
+                      <button type="button" className="btn-ghost" onClick={() => setAllBoqSelection(true)}>Check all</button>
+                      <button type="button" className="btn-ghost" onClick={() => setAllBoqSelection(false)}>Uncheck all</button>
+                    </div>
+                  </div>
+                  <div className="table-wrapper table-wrapper--no-x">
+                    <table className="matches-table resizable-table">
+                      <thead>
+                        <tr>
+                          <th className="checkbox-col"></th>
+                          <th className="boq-col-description">Description</th>
+                          <th className="boq-col-qty">Quantity</th>
+                          <th className="boq-col-unit">Unit</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {boqReviewRows.map(({ item, itemIdx, key }) => {
+                          const isSelected = !!selectedBoqRows[key];
+                          const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+                            const target = event.target as HTMLElement;
+                            if (target.closest("input, textarea, button, select")) return;
+                            setSelectedBoqRows(prev => ({ ...prev, [key]: !prev[key] }));
+                          };
+                          return (
+                            <tr
+                              key={key}
+                              className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
+                              onClick={handleRowClick}
+                            >
+                              <td className="checkbox-col">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    const checked = e.target.checked;
+                                    setSelectedBoqRows(prev => ({ ...prev, [key]: checked }));
+                                  }}
+                                />
+                              </td>
+                              <td className="boq-col-description">
+                                <textarea
+                                  className="form-input form-input--table finalize-textarea"
+                                  value={item.description || item.full_description || ""}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateBoqItemField(itemIdx, "description", e.target.value);
+                                  }}
+                                  placeholder="Description"
+                                  rows={1}
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  className="form-input form-input--table"
+                                  value={item.quantity || ""}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateBoqItemField(itemIdx, "quantity", e.target.value);
+                                  }}
+                                  placeholder="Qty"
+                                />
+                              </td>
+                              <td className="boq-col-unit">
+                                <input
+                                  className="form-input form-input--table"
+                                  value={item.unit || ""}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateBoqItemField(itemIdx, "unit", e.target.value);
+                                  }}
+                                  placeholder="Unit"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -1636,13 +2677,13 @@ function App() {
             {boqResults.comparisons.length > 0 ? (
               <>
                 <div className="table-wrapper table-wrapper--no-x" style={{ marginTop: "1.25rem" }}>
-                  <table className="matches-table resizable-table">
+                  <table className="matches-table resizable-table compare-table">
                     <thead>
                       <tr>
                         <th />
                         <ResizableTh resize={comparisonResize} index={0}>BOQ item</ResizableTh>
                         <ResizableTh resize={comparisonResize} index={1}>Drawing item</ResizableTh>
-                        <ResizableTh resize={comparisonResize} index={2}>Action</ResizableTh>
+                        <ResizableTh resize={comparisonResize} index={2} className="compare-action-col">Action</ResizableTh>
                       </tr>
                     </thead>
                     <tbody>
@@ -1677,18 +2718,16 @@ function App() {
                                 : "—"
                             )}
                           </td>
-                          <td>
-                            {row.status === "match_exact" ? null : (
-                              <select
-                                className="form-input form-input--table"
-                                value={comparisonSelections[idx] || ""}
-                                onChange={(e) => handleComparisonSelect(idx, e.target.value as "drawing" | "boq")}
-                              >
-                                <option value="">Choose source</option>
-                                {row.boq_item && <option value="boq">Select from BOQ</option>}
-                                {row.drawing_item && <option value="drawing">Select from Drawings</option>}
-                              </select>
-                            )}
+                          <td className="compare-action-col">
+                            <select
+                              className="form-input form-input--table"
+                              value={comparisonSelections[idx] || ""}
+                              onChange={(e) => handleComparisonSelect(idx, e.target.value as "drawing" | "boq")}
+                            >
+                              <option value="">Choose source</option>
+                              {row.boq_item && <option value="boq">Select from BOQ</option>}
+                              {row.drawing_item && <option value="drawing">Select from Drawings</option>}
+                            </select>
                           </td>
                         </tr>
                       ))}
@@ -1709,18 +2748,29 @@ function App() {
                       let missingSource = false;
                       boqResults.comparisons.forEach((row, idx) => {
                         if (!comparisonChecked[idx]) return;
-                        if (row.status === "match_exact") {
-                          if (row.boq_item) selections.push({ item: row.boq_item, source: "boq" });
-                          else if (row.drawing_item) selections.push({ item: row.drawing_item, source: "drawing" });
-                          return;
-                        }
                         const chosen = comparisonSelections[idx];
-                        if (!chosen) {
-                          missingSource = true;
+                        if (chosen === "boq" && row.boq_item) {
+                          selections.push(buildFinalizeEntry(row.boq_item, "boq", row.drawing_item || undefined));
                           return;
                         }
-                        if (chosen === "boq" && row.boq_item) selections.push({ item: row.boq_item, source: "boq" });
-                        if (chosen === "drawing" && row.drawing_item) selections.push({ item: row.drawing_item, source: "drawing" });
+                        if (chosen === "drawing" && row.drawing_item) {
+                          selections.push(buildFinalizeEntry(row.drawing_item, "drawing", row.boq_item || undefined));
+                          return;
+                        }
+
+                        // Fallbacks when no selection provided
+                        if (row.status === "match_exact") {
+                          if (row.boq_item) {
+                            selections.push(buildFinalizeEntry(row.boq_item, "boq", row.drawing_item || undefined));
+                            return;
+                          }
+                          if (row.drawing_item) {
+                            selections.push(buildFinalizeEntry(row.drawing_item, "drawing", row.boq_item || undefined));
+                            return;
+                          }
+                        }
+
+                        missingSource = true;
                       });
                       if (missingSource) {
                         setFeedback("Select source for all checked rows (unless they are auto-matched).");
@@ -1750,9 +2800,525 @@ function App() {
               onAddRow={() => setFinalizeItems(prev => [...prev, { item: {}, source: "manual" }])}
             />
             <div className="table-actions">
-              <button type="button" className="btn-match btn-outline">
+              <button type="button" className="btn-match btn-outline" onClick={handleGoToPricing}>
                 Go to Pricing
               </button>
+            </div>
+          </section>
+        )}
+
+        {activePage === "new-estimate" && activeEstimateStep === "pricing" && (
+          <section id="pricing" className="panel">
+            <div className="panel__header">
+              <div>
+                <p className="eyebrow">Pricing</p>
+              </div>
+            </div>
+            <div className="pricing-accordion">
+              {PRICING_SECTIONS.map(section => {
+                const isOpen = activePricingSection === section.id;
+                return (
+                  <div key={section.id} className={`pricing-accordion__card ${isOpen ? "is-open" : ""}`}>
+                    <button
+                      type="button"
+                      className="pricing-accordion__header"
+                      onClick={() => setActivePricingSection(isOpen ? null : section.id)}
+                      aria-pressed={isOpen}
+                    >
+                      <span className="pricing-accordion__label">{section.label}</span>
+                      <span className={`pricing-accordion__chevron ${isOpen ? "is-open" : ""}`} aria-hidden="true">▾</span>
+                    </button>
+
+                    {isOpen && (
+                      <div className="pricing-accordion__panel">
+                        {section.id === "items" ? (
+                          pricingSelections.length === 0 ? (
+                            <p className="empty-state" style={{ margin: 0 }}>No items available for pricing yet.</p>
+                          ) : (
+                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                              <table className="matches-table resizable-table pricing-table">
+                                <thead>
+                                  <tr>
+                                    <ResizableTh resize={pricingResize} index={0}>Id</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Item</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Description</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={3}>Capacity</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={4}>Size</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={5}>QTY</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={6}>Unit</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={7}>Remarks</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={8}>Unit Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={9}>Total Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={10}>Location</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={11}>Unit Manhour</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={12}>Total Manhour</ResizableTh>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {pricingSelections.map((sel, idx) => (
+                                    <tr key={`pricing-${idx}`} className="matches-table__row">
+                                      <td>{idx + 1}</td>
+                                      <td>
+                                        {renderCell(sel.item.item_type)}
+                                      </td>
+                                      <td>
+                                        <div
+                                          className="pricing-desc-cell"
+                                          ref={(node) => {
+                                            pricingDropdownRefs.current[idx] = node;
+                                          }}
+                                          onBlurCapture={(e) => {
+                                            const nextTarget = e.relatedTarget as Node | null;
+                                            if (!nextTarget || !e.currentTarget.contains(nextTarget)) {
+                                              closeMatchDropdown(idx);
+                                            }
+                                          }}
+                                          onMouseLeave={() => closeMatchDropdown(idx)}
+                                        >
+                                          <span className="pricing-desc-text">
+                                            {renderCell(sel.item.description || sel.item.full_description)}
+                                          </span>
+                                          {pricingMatchOptions[idx] && pricingMatchOptions[idx].length >= 1 && (
+                                            <>
+                                              <button
+                                                type="button"
+                                                className="pricing-match-trigger"
+                                                aria-label="Select pricing option"
+                                                aria-expanded={pricingDropdownOpen[idx] || false}
+                                                ref={(node) => {
+                                                  pricingTriggerRefs.current[idx] = node;
+                                                }}
+                                                onClick={() => openMatchDropdown(idx)}
+                                              >
+                                                ▾
+                                              </button>
+                                              {pricingDropdownOpen[idx] && (
+                                                <div
+                                                  className="pricing-match-menu"
+                                                  style={
+                                                    pricingDropdownPos[idx]
+                                                      ? {
+                                                        top: pricingDropdownPos[idx].top,
+                                                        left: pricingDropdownPos[idx].left,
+                                                        minWidth: Math.max(180, pricingDropdownPos[idx].width + 8),
+                                                        fontSize: "0.85rem",
+                                                        padding: "0.3rem",
+                                                      }
+                                                      : undefined
+                                                  }
+                                                  onMouseLeave={() => closeMatchDropdown(idx)}
+                                                >
+                                                  {pricingMatchOptions[idx].map((opt, optIdx) => (
+                                                    <button
+                                                      key={`${idx}-match-${optIdx}`}
+                                                      type="button"
+                                                      className={`pricing-match-menu__item ${pricingMatchChoice[idx] === optIdx ? "is-active" : ""
+                                                        }`}
+                                                      style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
+                                                      onClick={() => {
+                                                        handlePricingMatchChange(idx, optIdx);
+                                                        setPricingDropdownOpen((prev) => ({
+                                                          ...prev,
+                                                          [idx]: false,
+                                                        }));
+                                                      }}
+                                                    >
+                                                      {getMatchLabel(opt)}
+                                                    </button>
+                                                  ))}
+                                                  <div
+                                                    className="pricing-match-search"
+                                                    style={{
+                                                      borderTop: "1px solid #e0e0e0",
+                                                      marginTop: "0.4rem",
+                                                      paddingTop: "0.4rem",
+                                                      display: "flex",
+                                                      flexDirection: "column",
+                                                      gap: "0.35rem",
+                                                    }}
+                                                  >
+                                                    <input
+                                                      id={`pricing-search-${idx}`}
+                                                      className="form-input form-input--table"
+                                                      type="text"
+                                                      placeholder="Search Pricing List…"
+                                                      value={priceListSearch[idx] || ""}
+                                                      style={{ fontSize: "0.85rem", height: "1.9rem" }}
+                                                      onChange={(e) => handlePriceListSearchChange(idx, e.target.value)}
+                                                    />
+                                                    {(() => {
+                                                      const query = priceListSearch[idx] || "";
+                                                      const matches = findPriceListMatches(query);
+                                                      const canSearch = query.trim().length >= 3;
+                                                      if (priceListLoading) {
+                                                        return <p className="pricing-match-menu__hint">Loading pricing list…</p>;
+                                                      }
+                                                      if (priceListError) {
+                                                        return <p className="pricing-match-menu__hint" style={{ color: "#c00" }}>{priceListError}</p>;
+                                                      }
+                                                      if (!canSearch) {
+                                                        return <p className="pricing-match-menu__hint">Type at least 3 characters to search</p>;
+                                                      }
+                                                      if (!matches.length) {
+                                                        return <p className="pricing-match-menu__hint">No matches found</p>;
+                                                      }
+                                                      return (
+                                                        <div
+                                                          className="pricing-match-search__results"
+                                                          style={{
+                                                            display: "flex",
+                                                            flexDirection: "column",
+                                                            gap: "0.25rem",
+                                                            maxHeight: "140px",
+                                                            overflowY: "auto",
+                                                          }}
+                                                        >
+                                                          {matches.map(({ row: priceRow, rowIndex }) => {
+                                                            const label = getPriceListItemLabel(priceRow) || `Item ${rowIndex + 1}`;
+                                                            const description =
+                                                              (priceRow["Description"] as string) ||
+                                                              (priceRow["Desc"] as string) ||
+                                                              "";
+                                                            return (
+                                                              <button
+                                                                key={`pricing-search-${idx}-${rowIndex}`}
+                                                                type="button"
+                                                                className="pricing-match-menu__item"
+                                                                style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
+                                                                onClick={() => handleApplyPriceListRow(idx, rowIndex)}
+                                                              >
+                                                                <span style={{ display: "block", fontWeight: 600 }}>{label}</span>
+                                                                {description && (
+                                                                  <span className="pricing-match-menu__note" style={{ display: "block", fontSize: "0.85rem", color: "#444" }}>
+                                                                    {description}
+                                                                  </span>
+                                                                )}
+                                                              </button>
+                                                            );
+                                                          })}
+                                                        </div>
+                                                      );
+                                                    })()}
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td>{renderCell(sel.item.capacity)}</td>
+                                      <td>{renderCell(sel.item.size)}</td>
+                                      <td>
+                                        <input
+                                          className="form-input form-input--table"
+                                          type="number"
+                                          min="0"
+                                          step="1"
+                                          value={sel.item.quantity || ""}
+                                          onChange={(e) => handlePricingItemChange(idx, "quantity", e.target.value)}
+                                          placeholder="QTY"
+                                        />
+                                      </td>
+                                      <td>{renderCell(sel.item.unit)}</td>
+                                      <td>
+                                        {renderCell(sel.item.remarks)}
+                                      </td>
+                                      <td>
+                                        {renderCell(sel.item.unit_price)}
+                                      </td>
+                                      <td>{renderCell(sel.item.total_price)}</td>
+                                      <td>
+                                        {renderCell(sel.item.location)}
+                                      </td>
+                                      <td>
+                                        {renderCell(sel.item.unit_manhour)}
+                                      </td>
+                                      <td>
+                                        {renderCell(sel.item.total_manhour)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )
+                        ) : section.id === "electrical" ? (
+                          <div className="pricing-electrical">
+                            <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => setElectricalModalOpen(true)}
+                              >
+                                Calculate Electrical
+                              </button>
+                            </div>
+                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                              <table className="matches-table resizable-table pricing-table">
+                                <thead>
+                                  <tr>
+                                    <ResizableTh resize={pricingResize} index={0}>Item Description</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Qty</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Unit</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={3}>Unit Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={4}>Total Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={5}>Unit Manhour</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={6}>Total Manhour</ResizableTh>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <tr className="matches-table__row">
+                                    <td>
+                                      {renderCell(electricalRow.description)}
+                                    </td>
+                                    <td>
+                                      <input
+                                        className="form-input form-input--table"
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={electricalRow.qty}
+                                        onChange={(e) => handleElectricalQtyChange(e.target.value)}
+                                      />
+                                    </td>
+                                    <td>
+                                      {renderCell(electricalRow.unit)}
+                                    </td>
+                                    <td>
+                                      {renderCell(electricalRow.unitPrice)}
+                                    </td>
+                                    <td>{renderCell(electricalRow.totalPrice)}</td>
+                                    <td>
+                                      {renderCell(electricalRow.unitManhour)}
+                                    </td>
+                                    <td>{renderCell(electricalRow.totalManhour)}</td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : section.id === "atg" ? (
+                          <div className="pricing-atg">
+                            <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem" }}>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={handleFetchAtgData}
+                                disabled={atgLoading}
+                              >
+                                {atgLoading ? "Loading…" : "Get the ATG Data"}
+                              </button>
+                              {atgError && (
+                                <span style={{ color: "#c0392b", fontSize: "0.95rem" }}>{atgError}</span>
+                              )}
+                            </div>
+                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                              <table className="matches-table resizable-table pricing-table">
+                                <thead>
+                                  <tr>
+                                    <ResizableTh resize={pricingResize} index={0}>Item Description</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Qty</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Unit</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={3}>Unit Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={4}>Total Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={5}>Unit Manhour</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={6}>Total Manhour</ResizableTh>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <tr className="matches-table__row">
+                                    <td>
+                                      {renderCell(atgRow.description)}
+                                    </td>
+                                    <td>
+                                      <input
+                                        className="form-input form-input--table"
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={atgRow.qty}
+                                        onChange={(e) => handleAtgQtyChange(e.target.value)}
+                                      />
+                                    </td>
+                                    <td>
+                                      {renderCell(atgRow.unit)}
+                                    </td>
+                                    <td>
+                                      <input
+                                        className="form-input form-input--table"
+                                        value={atgRow.unitPrice}
+                                        onChange={(e) =>
+                                          setAtgRow(prev => {
+                                            const unitPrice = e.target.value;
+                                            const qty = prev.qty || "0";
+                                            return {
+                                              ...prev,
+                                              unitPrice,
+                                              totalPrice: computeTotalPrice(unitPrice, qty),
+                                            };
+                                          })
+                                        }
+                                        placeholder="Unit price"
+                                      />
+                                    </td>
+                                    <td>{renderCell(atgRow.totalPrice)}</td>
+                                    <td>
+                                      {renderCell(atgRow.unitManhour)}
+                                    </td>
+                                    <td>{renderCell(atgRow.totalManhour)}</td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : section.id === "installation" ? (
+                          <div className="pricing-installation">
+                            <div
+                              className="form-grid"
+                              style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: "0.75rem",
+                                alignItems: "flex-start",
+                              }}
+                            >
+                              <label className="form-field" style={installationFieldStyle}>
+                                <span className="form-label">Number of Workers</span>
+                                <input
+                                  className="form-input"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={installationInputs.workers}
+                                  onChange={(e) => handleInstallationChange("workers", e.target.value)}
+                                />
+                              </label>
+                              <label className="form-field" style={installationFieldStyle}>
+                                <span className="form-label">Number of Engineers</span>
+                                <input
+                                  className="form-input"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={installationInputs.engineers}
+                                  onChange={(e) => handleInstallationChange("engineers", e.target.value)}
+                                />
+                              </label>
+                              <label className="form-field" style={installationFieldStyle}>
+                                <span className="form-label">Number of Supervisors</span>
+                                <input
+                                  className="form-input"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={installationInputs.supervisors}
+                                  onChange={(e) => handleInstallationChange("supervisors", e.target.value)}
+                                />
+                              </label>
+                              <label className="form-field" style={installationFieldStyle}>
+                                <span className="form-label">Location</span>
+                                <select
+                                  className="form-input"
+                                  value={installationInputs.location}
+                                  onChange={(e) => handleInstallationChange("location", e.target.value)}
+                                >
+                                  <option value="riyadh">Riyadh</option>
+                                  <option value="remote">Remote Area</option>
+                                </select>
+                              </label>
+                            </div>
+
+                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.75rem" }}>
+                              <table className="matches-table resizable-table pricing-table">
+                                <thead>
+                                  <tr>
+                                    <ResizableTh resize={pricingResize} index={0}>Metric</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Value</ResizableTh>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <tr className="matches-table__row">
+                                    <td>Total number of workers</td>
+                                    <td>{formatNumber(installationTotals.totalWorkers)}</td>
+                                  </tr>
+                                  <tr className="matches-table__row">
+                                    <td>Total manhour</td>
+                                    <td>{formatNumber(totalManhour)}</td>
+                                  </tr>
+                                  <tr className="matches-table__row">
+                                    <td>Project period</td>
+                                    <td>{formatNumber(installationTotals.projectPeriod)}</td>
+                                  </tr>
+                                  {isRemoteLocation ? (
+                                    <>
+                                      <tr className="matches-table__row">
+                                        <td>Monthly</td>
+                                        <td>{formatNumber(installationTotals.monthlyRemote)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Weekly</td>
+                                        <td>{formatNumber(installationTotals.weeklyRemote)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Manpower cost</td>
+                                        <td>{formatNumber(installationTotals.manpowerRemote)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Installation profit</td>
+                                        <td>{formatNumber(installationTotals.profitRemote)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Risk</td>
+                                        <td>{formatNumber(installationTotals.riskRemote)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Price</td>
+                                        <td>{formatNumber(installationTotals.priceRemote)}</td>
+                                      </tr>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <tr className="matches-table__row">
+                                        <td>Monthly</td>
+                                        <td>{formatNumber(installationTotals.monthlyRiyadh)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Weekly</td>
+                                        <td>{formatNumber(installationTotals.weeklyRiyadh)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Manpower cost</td>
+                                        <td>{formatNumber(installationTotals.manpowerRiyadh)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Installation profit</td>
+                                        <td>{formatNumber(installationTotals.profitRiyadh)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Risk</td>
+                                        <td>{formatNumber(installationTotals.riskRiyadh)}</td>
+                                      </tr>
+                                      <tr className="matches-table__row">
+                                        <td>Price</td>
+                                        <td>{formatNumber(installationTotals.priceRiyadh)}</td>
+                                      </tr>
+                                    </>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="pricing-placeholder">
+                            <h3>{section.label} pricing</h3>
+                            <p>We will implement this section soon.</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}
@@ -1832,38 +3398,6 @@ function App() {
               </div>
             </form>
 
-            {pricingSelections.length > 0 && (
-              <div className="table-wrapper" style={{ marginTop: "1rem" }}>
-                <div className="panel__header" style={{ marginBottom: "0.5rem" }}>
-                  <p className="eyebrow">Pricing</p>
-                  <h4>Items to Price</h4>
-                </div>
-                <table className="matches-table resizable-table">
-                  <thead>
-                    <tr>
-                      <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
-                      <ResizableTh resize={pricingResize} index={1}>Quantity</ResizableTh>
-                      <ResizableTh resize={pricingResize} index={2}>Unit</ResizableTh>
-                      <ResizableTh resize={pricingResize} index={3}>Source</ResizableTh>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pricingSelections.map((sel, idx) => (
-                      <tr key={`pricing-${idx}`} className="matches-table__row">
-                        <td>{renderCell(sel.item.description || sel.item.full_description)}</td>
-                        <td>{renderCell(sel.item.quantity)}</td>
-                        <td>{renderCell(sel.item.unit)}</td>
-                        <td>
-                          <span className={`pill ${sel.source === "drawing" ? "pill--blue" : "pill--green"}`}>
-                            {sel.source === "drawing" ? "Drawing" : "BOQ"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </section>
         )}
 

@@ -7,6 +7,12 @@ import type {
   EstimateDraftMeta,
   DraftEstimateState,
   EstimateStep,
+  PriceListRow,
+  PriceMapping,
+  AtgTotals,
+  ElectricalTotals,
+  ElectricalCalcRequest,
+  ElectricalCalcResponse,
 } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
@@ -264,6 +270,32 @@ export async function getDraft(id: string): Promise<EstimateDraft> {
 
 export async function removeDraft(id: string): Promise<void> {
   await safeFetch(`${API_BASE}/api/drafts/${id}`, { method: "DELETE" });
+}
+
+export async function fetchPriceList(): Promise<{ data: PriceListRow[] }> {
+  return safeFetch(`${API_BASE}/api/estimates/price-list`);
+}
+
+export async function fetchAtgTotals(): Promise<AtgTotals> {
+  return safeFetch(`${API_BASE}/api/estimates/atg`);
+}
+
+export async function fetchElectricalTotals(): Promise<ElectricalTotals> {
+  return safeFetch(`${API_BASE}/api/estimates/electrical`);
+}
+
+export async function calculateElectrical(payload: ElectricalCalcRequest): Promise<ElectricalCalcResponse> {
+  return safeFetch(`${API_BASE}/api/estimates/electrical/calculate`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function priceMap(items: ExtractedItem[]): Promise<{ mappings: PriceMapping[]; rawContent: string }> {
+  return safeFetch(`${API_BASE}/api/estimates/price-map`, {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  });
 }
 
 // Authentication functions

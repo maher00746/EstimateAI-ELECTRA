@@ -3,16 +3,32 @@ export interface AttributeValue {
   price?: string;
 }
 
-export type EstimateStep = "upload" | "review" | "compare" | "finalize";
+export type EstimateStep = "upload" | "review" | "compare" | "finalize" | "pricing";
 
 export interface ExtractedItem {
   item_number?: string;
+  item_type?: string;
   description?: string;
   capacity?: string;
   size?: string;
   quantity?: string;
   unit?: string;
+  remarks?: string;
+  unit_price?: string;
+  total_price?: string;
+  location?: string;
+  unit_manhour?: string;
+  total_manhour?: string;
   full_description?: string;
+}
+
+export type InstallationLocation = "riyadh" | "remote";
+
+export interface InstallationInputs {
+  workers: string;
+  engineers: string;
+  supervisors: string;
+  location: InstallationLocation;
 }
 
 // Support both old format (string) and new format (object with value and price)
@@ -72,9 +88,33 @@ export interface DraftEstimateState {
   boqResults: { boqItems: ExtractedItem[]; comparisons: BoqComparisonRow[] };
   comparisonSelections: Record<number, "drawing" | "boq" | "">;
   comparisonChecked: Record<number, boolean>;
+  selectedDrawingRows?: Record<string, boolean>;
+  selectedBoqRows?: Record<string, boolean>;
   finalizeItems: DraftFinalizeItem[];
-  pricingSelections: Array<{ source: "drawing" | "boq"; item: ExtractedItem }>;
+  pricingSelections: Array<{ source: ItemSource; item: ExtractedItem }>;
+  pricingMatchOptions?: Record<number, PriceMapping[]>;
+  pricingMatchChoice?: Record<number, number>;
   selectedBoqFileName?: string;
+  atgRow?: {
+    description: string;
+    qty: string;
+    unit: string;
+    unitPrice: string;
+    totalPrice: string;
+    unitManhour: string;
+    totalManhour: string;
+  };
+  electricalRow?: {
+    description: string;
+    qty: string;
+    unit: string;
+    unitPrice: string;
+    totalPrice: string;
+    unitManhour: string;
+    totalManhour: string;
+  };
+  electricalInputs?: Record<string, string>;
+  installationInputs?: InstallationInputs;
 }
 
 export interface EstimateDraftMeta {
@@ -87,5 +127,41 @@ export interface EstimateDraftMeta {
 
 export interface EstimateDraft extends EstimateDraftMeta {
   state: DraftEstimateState;
+}
+
+export interface PriceListRow {
+  [key: string]: string | number;
+}
+
+export interface PriceMapping {
+  item_index: number;
+  price_list_index: number;
+  unit_price?: string | number;
+  unit_manhour?: string | number;
+  price_row?: Record<string, string | number>;
+  note?: string;
+}
+
+export interface AtgTotals {
+  totalSellingPrice: number | string;
+  totalManhour: number | string;
+}
+
+export interface ElectricalTotals {
+  totalPrice: number | string;
+  manhour: number | string;
+}
+
+export interface ElectricalCalcRequest {
+  a2?: number;
+  x: number;
+  y: number;
+  z: number;
+  cValues: Array<number>;
+}
+
+export interface ElectricalCalcResponse {
+  totalPrice: number;
+  totalManhours: number;
 }
 

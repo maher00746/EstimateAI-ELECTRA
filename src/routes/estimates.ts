@@ -19,6 +19,10 @@ import { AttributeMap, AttributeValue, ExtractedItem } from "../types/build";
 import { compareItemListsWithOpenAI, comparePreExtractedLists, extractBoqWithOpenAI } from "../services/openai/boqComparer";
 import { extractTextFromPdf, extractTextFromDocx, extractTextFromTxt } from "../services/parsing/textExtractor";
 import { parseBoqFile } from "../services/parsing/boqExtractor";
+import { loadPriceList } from "../services/pricing/priceList";
+import { loadAtgTotals } from "../services/pricing/atgSheet";
+import { loadElectricalTotals, calculateProjectCost } from "../services/pricing/electricalSheet";
+import { mapItemsToPriceList } from "../services/openai/priceMapper";
 
 interface CandidateSummary {
   id: string;
@@ -264,6 +268,87 @@ router.get("/stats", async (req, res, next) => {
   try {
     const totalCount = await getTotalBuildCount();
     res.status(200).json({ totalBuilds: totalCount });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/price-list", async (_req, res, next) => {
+  try {
+    const data = await loadPriceList();
+    res.status(200).json({ data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/atg", async (_req, res, next) => {
+  try {
+    const data = await loadAtgTotals();
+    res.status(200).json(data);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/electrical", async (_req, res, next) => {
+  try {
+    const data = await loadElectricalTotals();
+    res.status(200).json(data);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/electrical/calculate", async (req, res, next) => {
+  try {
+    const {
+      a2 = 0,
+      x,
+      y,
+      z,
+      cValues = [],
+    } = req.body as {
+      a2?: number;
+      x: number;
+      y: number;
+      z: number;
+      cValues: Array<number | string>;
+    };
+
+    if (x === undefined || y === undefined || z === undefined) {
+      return res.status(400).json({ message: "x, y, z are required" });
+    }
+
+    const nums = Array.from({ length: 21 }).map((_, idx) => {
+      const raw = cValues[idx];
+      const num = Number(raw ?? 0);
+      return Number.isFinite(num) ? num : 0;
+    });
+
+    const result = calculateProjectCost(
+      Number(a2) || 0,
+      Number(x) || 0,
+      Number(y) || 0,
+      Number(z) || 0,
+      ...nums
+    );
+
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/price-map", async (req, res, next) => {
+  try {
+    const items = Array.isArray(req.body.items) ? (req.body.items as ExtractedItem[]) : [];
+    if (!items.length) {
+      return res.status(400).json({ message: "items array is required" });
+    }
+
+    const result = await mapItemsToPriceList(items);
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }
