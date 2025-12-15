@@ -59,6 +59,7 @@ export type ComparisonStatus =
   | "match_exact"
   | "match_quantity_diff"
   | "match_unit_diff"
+  | "match_size_diff"
   | "missing_in_boq"
   | "missing_in_drawing"
   | "no_match";

@@ -20,7 +20,6 @@ import { compareItemListsWithOpenAI, comparePreExtractedLists, extractBoqWithOpe
 import { enrichBoqItemsWithOpenAI } from "../services/openai/boqEnricher";
 import { extractTextFromPdf, extractTextFromDocx, extractTextFromTxt } from "../services/parsing/textExtractor";
 import { parseBoqFile } from "../services/parsing/boqExtractor";
-import { extractTextFromPdf, extractTextFromDocx, extractTextFromTxt } from "../services/parsing/textExtractor";
 import { loadPriceList } from "../services/pricing/priceList";
 import { loadAtgTotals } from "../services/pricing/atgSheet";
 import { loadElectricalTotals, calculateProjectCost } from "../services/pricing/electricalSheet";
@@ -322,18 +321,28 @@ router.post("/electrical/calculate", async (req, res, next) => {
       return res.status(400).json({ message: "x, y, z are required" });
     }
 
-    const nums = Array.from({ length: 21 }).map((_, idx) => {
+    const cList = Array.from({ length: 21 }, (_, idx) => {
       const raw = cValues[idx];
       const num = Number(raw ?? 0);
       return Number.isFinite(num) ? num : 0;
-    });
+    }) as [
+        number, number, number, number, number, number, number,
+        number, number, number, number, number, number, number,
+        number, number, number, number, number, number, number
+      ];
+
+    const [
+      c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16,
+      c17, c18, c19, c20, c21, c22, c23, c24, c25,
+    ] = cList;
 
     const result = calculateProjectCost(
       Number(a2) || 0,
       Number(x) || 0,
       Number(y) || 0,
       Number(z) || 0,
-      ...nums
+      c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16,
+      c17, c18, c19, c20, c21, c22, c23, c24, c25
     );
 
     res.status(200).json(result);
@@ -606,23 +615,23 @@ router.post("/boq/extract", upload.single("boqFile"), async (req, res, next) => 
     try {
       if (ext === ".pdf") {
         const text = await extractTextFromPdf(req.file.path);
-        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text }));
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text, fileName: req.file.originalname }));
       } else if (ext === ".docx") {
         const text = await extractTextFromDocx(req.file.path);
-        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text }));
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text, fileName: req.file.originalname }));
       } else if (ext === ".txt") {
         const text = await extractTextFromTxt(req.file.path);
-        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text }));
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text, fileName: req.file.originalname }));
       } else if ([".png", ".jpg", ".jpeg"].includes(ext)) {
         const buffer = await fs.readFile(req.file.path);
         const imageBase64 = buffer.toString("base64");
         const imageExt = ext.replace(".", "");
-        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ imageBase64, imageExt }));
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ imageBase64, imageExt, fileName: req.file.originalname }));
       } else {
         // Fallback: if no structured parse and not a handled type, try text anyway
         try {
           const text = await fs.readFile(req.file.path, "utf-8");
-          ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text }));
+          ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text, fileName: req.file.originalname }));
         } catch {
           /* ignore */
         }

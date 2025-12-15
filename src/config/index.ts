@@ -12,7 +12,7 @@ export const config = {
   staticDir: path.resolve(process.env.STATIC_DIR ?? path.join(rootDir, "uploads", "raw")),
   maxFileSize: 60 * 1024 * 1024, // 60MB per file
   openAiKey: process.env.OPENAI_API_KEY ?? "",
-  openAiModel: "gpt-5.1",
+  openAiModel: "gpt-5.2",
   airweaveBaseUrl: (process.env.AIRWEAVE_BASE_URL ?? "https://api.airweave.ai").replace(/\/+$/, ""),
   airweaveApiKey: process.env.AIRWEAVE_API_KEY ?? "",
   airweaveCollectionId: process.env.AIRWEAVE_COLLECTION_ID ?? "",

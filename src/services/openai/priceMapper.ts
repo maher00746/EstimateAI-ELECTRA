@@ -200,7 +200,8 @@ Standard inch to mm conversions (CRITICAL - use these exact values):
 
 **STORAGE_TANK / DAY_TANK:**
 - Match by EXACT capacity (e.g., 10000L, 500 Gal)
-- Return ALL price list rows for that tank type with matching capacity
+- match by type of tank (day/storage).
+- Return ALL price list rows for that tank type with matching capacity and type of tank
 
 **PUMP:**
 - Match by GPM or LPM rating from description/capacity
@@ -209,7 +210,7 @@ Standard inch to mm conversions (CRITICAL - use these exact values):
 
 **BALL_VALVE (BV) / CHECK_VALVE (CV) / GATE_VALVE:**
 - Match by SIZE (in mm after conversion)
-- 3" = 80mm, 4" = 100mm, etc.
+- 3" = 80mm, 4" = 100mm, 1" = 25mm, 2"  = 50mm etc.
 - Return ALL valves of that type with matching size
 
 **PIPE / PIPING:**
@@ -219,26 +220,18 @@ Standard inch to mm conversions (CRITICAL - use these exact values):
 **STRAINER / FLEXIBLE_HOSE / VENT:**
 - Match by SIZE (in mm)
 
-**LEVEL_DEVICE:**
-- Match by SIZE (in inch like 2", 3", 4", etc.)
+**EMERGENCY_VENT:**
+- return ALL emergency vents with the same size.
+- Match by SIZE (in mm)
+
+**LEVEL INDICATOR**
+- if the tank type is provided, then return all level indicators for that tank type, if not specified, return all level indicators.
 
 **OTHER items:**
 - Match by semantic similarity in description
 - Consider size/capacity if present
 
-## EXAMPLES
 
-Example 1 - Tank matching:
-Item: {idx: 0, category: "STORAGE_TANK", description: "Storage Tank", capacity: "10000L"}
-→ Find ALL rows in price list containing "Storage Tank" AND "10000" in capacity/description
-
-Example 2 - Valve matching:
-Item: {idx: 1, category: "BALL_VALVE", description: "BV", size: "80mm"}
-→ Find ALL rows containing "Ball Valve" or "BV" with size "80" or "80mm" or "3""
-
-Example 3 - Pipe matching:
-Item: {idx: 2, category: "PIPE", description: "Steel Pipe", size: "100mm"}
-→ Find ALL pipe entries with size containing "100" or "4""
 
 ## INPUT DATA
 
@@ -264,12 +257,12 @@ Return ONLY valid JSON in this exact structure:
 }
 
 ## IMPORTANT RULES
-1. Return MULTIPLE mappings per item if multiple price list rows match
+1. Return MULTIPLE mappings per item if multiple price list rows match, Make sure you checked all the price list rows for the item.
 2. Copy unit_price and unit_manhour EXACTLY as they appear in the price list row
 3. Only include confident matches - omit items with no good match
 4. Use zero-based indices
 5. Do NOT include any text outside the JSON
-6. If you find match, continue for the rest of items for make sure that all matches are found.
+6. If you find match, continue for the rest of pricing list tems for make sure that all matches are found.
 `.trim();
 }
 

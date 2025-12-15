@@ -1367,7 +1367,7 @@ function App() {
 
   const getComparisonClass = (status: string) => {
     const okStatuses = new Set(["match_exact", "exact_match", "match", "matched"]);
-    const warnStatuses = new Set(["match_quantity_diff", "match_unit_diff", "partial_match"]);
+    const warnStatuses = new Set(["match_quantity_diff", "match_unit_diff", "partial_match", "match_size_diff"]);
     const missingStatuses = new Set(["missing_in_boq", "missing_in_drawing", "no_match"]);
     if (okStatuses.has(status)) return "compare-row--ok";
     if (warnStatuses.has(status)) return "compare-row--warn";

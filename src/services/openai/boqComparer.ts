@@ -1,11 +1,13 @@
 import { config } from "../../config";
 import { ExtractedItem } from "../../types/build";
+import { DRAWING_EXTRACTION_PROMPT, DRAWING_SYSTEM_PROMPT, extractAttributesWithOpenAI, parseJsonFromMessage, toItemsArray } from "../parsing/openaiExtractor";
 import { getOpenAiClient } from "./client";
 
 export type ComparisonStatus =
     | "match_exact"
     | "match_quantity_diff"
     | "match_unit_diff"
+    | "match_size_diff"
     | "missing_in_boq"
     | "missing_in_drawing"
     | "no_match";
@@ -28,6 +30,7 @@ interface BoqPayload {
     text?: string;
     imageBase64?: string;
     imageExt?: string;
+    fileName?: string;
 }
 
 function tryParseJson(content: string): ComparisonResponse {
@@ -56,51 +59,47 @@ function tryParseJson(content: string): ComparisonResponse {
 export async function extractBoqWithOpenAI(boqPayload: BoqPayload): Promise<{ items: ExtractedItem[]; rawContent: string }> {
     const client = getOpenAiClient();
 
-    const prompt = `
-You are a senior MEP estimation engineer. Extract BOQ items from the provided content.
-Return JSON only with shape: { "items": [ { "item_number": "", "description": "", "quantity": "", "unit": "", "size": "", "capacity": "", "full_description": "" } ] }
-Use only data from the BOQ.
-  `.trim();
-
-    const messages: Array<{ role: "system" | "user"; content: any }> = [
-        { role: "system", content: "Return only JSON and follow the specified schema." },
-    ];
-
-    if (boqPayload.imageBase64 && boqPayload.imageExt) {
-        messages.push({
-            role: "user",
-            content: [
-                { type: "text", text: `${prompt}\n\nUse this BOQ image.` },
-                {
-                    type: "image_url",
-                    image_url: {
-                        url: `data:image/${boqPayload.imageExt};base64,${boqPayload.imageBase64}`,
-                    },
-                },
-            ],
-        });
-    } else {
-        messages.push({
-            role: "user",
-            content: `${prompt}\n\nBOQ content:\n${boqPayload.text ?? ""}`.slice(0, 32000),
-        });
+    // Reuse the same OpenAI extraction logic/prompt used for drawings
+    if (boqPayload.text) {
+        const result = await extractAttributesWithOpenAI(boqPayload.text, boqPayload.fileName ?? "BOQ");
+        return { items: result.items, rawContent: result.rawContent ?? "" };
     }
 
-    const response = await client.chat.completions.create({
-        model: config.openAiModel,
-        messages,
-        temperature: 0,
-        max_completion_tokens: 1500,
-        response_format: { type: "json_object" },
-    });
+    if (boqPayload.imageBase64 && boqPayload.imageExt) {
+        const messages: Array<{ role: "system" | "user"; content: any }> = [
+            { role: "system", content: DRAWING_SYSTEM_PROMPT },
+            {
+                role: "user",
+                content: [
+                    {
+                        type: "text",
+                        text: `${DRAWING_EXTRACTION_PROMPT}\n\nBuild document name: ${boqPayload.fileName ?? "BOQ"}`,
+                    },
+                    {
+                        type: "image_url",
+                        image_url: {
+                            url: `data:image/${boqPayload.imageExt};base64,${boqPayload.imageBase64}`,
+                        },
+                    },
+                ],
+            },
+        ];
 
-    const content = response.choices?.[0]?.message?.content ?? "{}";
-    console.log("[extract-boq] OpenAI raw content:", content?.slice(0, 500));
+        const response = await client.chat.completions.create({
+            model: "gpt-5.2",
+            messages,
+            temperature: 0,
+            max_completion_tokens: 8000,
+        });
 
-    const parsed = tryParseJson(content);
-    const items = (parsed as any).items ?? parsed.parsed_boq ?? [];
+        const rawMessage = response.choices?.[0]?.message?.content ?? "";
+        const parsed = await parseJsonFromMessage(rawMessage);
+        const items = toItemsArray(parsed);
+        return { items, rawContent: rawMessage };
+    }
 
-    return { items, rawContent: content };
+    // Fallback: nothing to process
+    return { items: [], rawContent: "" };
 }
 
 export async function compareItemListsWithOpenAI(
@@ -116,6 +115,7 @@ Statuses:
 - "match_exact": same item with matching quantity and unit.
 - "match_quantity_diff": item matches but quantity differs.
 - "match_unit_diff": item matches but unit differs.
+- "match_size_diff": item matches but size differs.
 - "missing_in_boq": item exists in drawings but not in BOQ.
 - "missing_in_drawing": item exists in BOQ but not in drawings.
 - "no_match": no confident match found.
@@ -131,7 +131,7 @@ Rules:
     {
       "drawing_item": { ... },
       "boq_item": { ... },
-      "status": "match_exact" | "match_quantity_diff" | "match_unit_diff" | "missing_in_boq" | "missing_in_drawing" | "no_match",
+      "status": "match_exact" | "match_quantity_diff" | "match_unit_diff" | "match_size_diff" | "missing_in_boq" | "missing_in_drawing" | "no_match",
       "note": "short note"
     }
   ],
@@ -235,16 +235,25 @@ export async function comparePreExtractedLists(
         boqItems: boqItems.length,
     });
 
-    const prompt = `Compare Drawing vs BOQ items. Match by description/size/capacity, 
-    each item from each list should appear only one time, 
-    only match the exact items,
-    start from BOQ items and find the maches from drawings (if any).
+    const prompt = `
+You are a senior MEP estimator. Compare Drawing vs BOQ items and match semantically equivalent items (synonyms, abbreviations, plural/singular). Start from BOQ items and find the best matching drawing item (one-to-one).
+
+Matching rules:
+- Treat common synonyms as equivalent:
+  - Ball Valve ~ BV; Check Valve ~ CV; Gate Valve ~ GV; Butterfly Valve ~ BFV; Valve abbreviations map to full names.
+  - Filling Point ~ Filling Station ~ Fueling Point ~ Fuel Dispenser inlet; Fuel Pump ~ Dispenser (if context suggests).
+  - Pipe ~ Piping ~ Line ~ Supply Pipe ~ Carbon steel pipe; Hose ~ Flexible Hose.
+- Normalize sizes: consider "1 inch" = 1" = Ø1 = DN25 ≈ 25mm; 2" ≈ 50mm; 3" ≈ 80mm; 4" ≈ 100mm. Prefer matches with same size/capacity; if one side lacks size, match on description/capacity.
+- Normalize units/qty text case-insensitively. If description/size match but qty differs -> match_quantity_diff. If unit differs -> match_unit_diff.
+- Only mark missing_in_drawing when no reasonable semantic match exists for a BOQ item. Only mark missing_in_boq when a drawing item has no BOQ counterpart.
 
 Status codes:
-- match_exact: same item, qty & unit match (for size, 1 inch = 1" = Ø1")
-- match_quantity_diff: item matches, qty differs
-- missing_in_boq: exist in drawing, not in BOQ
-- missing_in_drawing: exist in BOQ, not in drawing
+- match_exact: same item, size/capacity aligns, qty & unit match (inch vs mm allowed via normalization).
+- match_quantity_diff: item matches but quantity differs.
+- match_unit_diff: item matches but unit differs.
+- match_size_diff: item matches but size differs.
+- missing_in_boq: exists in drawing, not in BOQ.
+- missing_in_drawing: exists in BOQ, not in drawing.
 
 Return JSON: {"comparisons": [{"drawing_idx": 0, "boq_idx": 0, "status": "match_exact", "note": ""}]}
 

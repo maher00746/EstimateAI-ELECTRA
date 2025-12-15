@@ -2,63 +2,10 @@ import { config } from "../../config";
 import { AttributeMap, ExtractedItem } from "../../types/build";
 import { getOpenAiClient } from "../openai/client";
 
-async function parseJsonFromMessage(message: string): Promise<unknown> {
-  const arrayMatch = message.match(/\[[\s\S]*\]/);
-  const objectMatch = message.match(/\{[\s\S]*\}/);
-  const jsonMatch = arrayMatch?.[0] ?? objectMatch?.[0];
-  if (!jsonMatch) {
-    throw new Error("OpenAI response did not include JSON");
-  }
-  return JSON.parse(jsonMatch);
-}
+export const DRAWING_SYSTEM_PROMPT =
+  "You are a rules-aware parser. Always return JSON, and never add explanatory prose outside the JSON.";
 
-function toItemsArray(payload: unknown): ExtractedItem[] {
-  const items = Array.isArray(payload)
-    ? payload
-    : (payload && typeof payload === "object" && "items" in (payload as Record<string, unknown>))
-      ? (payload as Record<string, unknown>).items
-      : null;
-  if (!Array.isArray(items)) return [];
-
-  return items
-    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item))
-    .map((record) => ({
-      item_number: record.item_number as string | undefined,
-      item_type: record.item_type as string | undefined,
-      description: record.description as string | undefined,
-      capacity: record.capacity as string | undefined,
-      size: record.size as string | undefined,
-      quantity: record.quantity as string | undefined,
-      unit: record.unit as string | undefined,
-      full_description: record.full_description as string | undefined,
-    }));
-}
-
-function structuredItemsToAttributeMap(items: ExtractedItem[]): AttributeMap {
-  return items.reduce<AttributeMap>((acc, item, index) => {
-    const label = item.item_number || item.description || `Item ${index + 1}`;
-
-    const parts: string[] = [];
-    if (item.item_type) parts.push(`[${item.item_type}]`);
-    if (item.description) parts.push(item.description);
-    if (item.capacity) parts.push(`Capacity: ${item.capacity}`);
-    if (item.size) parts.push(`Size: ${item.size}`);
-    if (item.quantity || item.unit) {
-      parts.push(`Qty: ${item.quantity ?? ""}${item.unit ? ` ${item.unit}` : ""}`.trim());
-    }
-    if (item.full_description) parts.push(item.full_description);
-
-    acc[label] = parts.filter(Boolean).join(" | ") || "—";
-    return acc;
-  }, {});
-}
-
-export async function extractAttributesWithOpenAI(
-  rawText: string,
-  fileName: string
-): Promise<{ attributes: AttributeMap; items: ExtractedItem[]; totalPrice?: string }> {
-  const trimmed = rawText.replace(/\s+/g, " ");
-  const prompt = `
+export const DRAWING_EXTRACTION_PROMPT = `
 You are a senior MEP estimator specializing in fuel systems. Extract every measurable component from the supplied MEP drawings and return them in structured JSON format. Be thorough and accurate.
 
 ═══════════════════════════════════════════════════════════════════
@@ -185,7 +132,7 @@ Return a JSON array. Each item must have these fields:
 
 Field definitions:
 - item_number: Sequential number starting from "1"
-- item_type: Category code (STORAGE_TANK, DAY_TANK, PUMP, BALL_VALVE, CHECK_VALVE, GATE_VALVE, PIPE, STRAINER, FLEXIBLE_HOSE, VENT, LEVEL_PROBE, LEVEL_SWITCH, LEAK_SENSOR, CONTROL_PANEL, FILLING_POINT, CONDUIT, CABLE, OTHER)
+- item_type: Category code (STORAGE_TANK, DAY_TANK, PUMP, EMERGENCY_VENT, BALL_VALVE, CHECK_VALVE, GATE_VALVE, PIPE, STRAINER, FLEXIBLE_HOSE, VENT, LEVEL_INDICATOR, LEVEL_SWITCH, LEAK_SENSOR, CONTROL_PANEL, FILLING_POINT, CONDUIT, CABLE, OTHER)
 - description: Clear item name as shown on drawing
 - capacity: Tank capacity or pump flow rate (leave empty if not applicable)
 - size: Diameter in mm or dimension (leave empty if not applicable)
@@ -205,20 +152,75 @@ Before returning your response, verify:
 □ Quantities are totals (not per-line)
 □ No civil items included
 □ JSON is valid and complete
-`;
+`.trim();
 
+export async function parseJsonFromMessage(message: string): Promise<unknown> {
+  const arrayMatch = message.match(/\[[\s\S]*\]/);
+  const objectMatch = message.match(/\{[\s\S]*\}/);
+  const jsonMatch = arrayMatch?.[0] ?? objectMatch?.[0];
+  if (!jsonMatch) {
+    throw new Error("OpenAI response did not include JSON");
+  }
+  return JSON.parse(jsonMatch);
+}
+
+export function toItemsArray(payload: unknown): ExtractedItem[] {
+  const items = Array.isArray(payload)
+    ? payload
+    : (payload && typeof payload === "object" && "items" in (payload as Record<string, unknown>))
+      ? (payload as Record<string, unknown>).items
+      : null;
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item))
+    .map((record) => ({
+      item_number: record.item_number as string | undefined,
+      item_type: record.item_type as string | undefined,
+      description: record.description as string | undefined,
+      capacity: record.capacity as string | undefined,
+      size: record.size as string | undefined,
+      quantity: record.quantity as string | undefined,
+      unit: record.unit as string | undefined,
+      full_description: record.full_description as string | undefined,
+    }));
+}
+
+function structuredItemsToAttributeMap(items: ExtractedItem[]): AttributeMap {
+  return items.reduce<AttributeMap>((acc, item, index) => {
+    const label = item.item_number || item.description || `Item ${index + 1}`;
+
+    const parts: string[] = [];
+    if (item.item_type) parts.push(`[${item.item_type}]`);
+    if (item.description) parts.push(item.description);
+    if (item.capacity) parts.push(`Capacity: ${item.capacity}`);
+    if (item.size) parts.push(`Size: ${item.size}`);
+    if (item.quantity || item.unit) {
+      parts.push(`Qty: ${item.quantity ?? ""}${item.unit ? ` ${item.unit}` : ""}`.trim());
+    }
+    if (item.full_description) parts.push(item.full_description);
+
+    acc[label] = parts.filter(Boolean).join(" | ") || "—";
+    return acc;
+  }, {});
+}
+
+export async function extractAttributesWithOpenAI(
+  rawText: string,
+  fileName: string
+): Promise<{ attributes: AttributeMap; items: ExtractedItem[]; totalPrice?: string; rawContent?: string }> {
+  const trimmed = rawText.replace(/\s+/g, " ");
   const client = getOpenAiClient();
   const response = await client.chat.completions.create({
     model: "gpt-5.2", // drawings extractor should use the latest OpenAI model
     messages: [
       {
         role: "system",
-        content:
-          "You are a rules-aware parser. Always return JSON, and never add explanatory prose outside the JSON.",
+        content: DRAWING_SYSTEM_PROMPT,
       },
       {
         role: "user",
-        content: `${prompt}\n\nBuild document name: ${fileName}\n\n${trimmed}`,
+        content: `${DRAWING_EXTRACTION_PROMPT}\n\nBuild document name: ${fileName}\n\n${trimmed}`,
       },
     ],
     temperature: 0,
@@ -237,6 +239,6 @@ Before returning your response, verify:
   const items = toItemsArray(parsed);
   const attributes = structuredItemsToAttributeMap(items);
 
-  return { attributes, items, totalPrice: undefined };
+  return { attributes, items, totalPrice: undefined, rawContent: rawMessage };
 }
 
