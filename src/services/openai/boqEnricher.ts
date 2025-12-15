@@ -69,7 +69,6 @@ Rules:
   });
 
   const content = response.choices?.[0]?.message?.content ?? "{}";
-  console.log("[boq-enrich] raw OpenAI content:", content?.slice(0, 1000));
   const parsed = tryParseJson(content);
   const enrichedList = parsed.items || [];
 

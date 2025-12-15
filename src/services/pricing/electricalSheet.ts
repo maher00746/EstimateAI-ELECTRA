@@ -116,7 +116,12 @@ export function calculateProjectCost(
 
   const priceBoxes = (boxesSt + boxesDt + boxesFp) * 50;
 
-  const totalPrice = pricePwrCable + priceSigCable + priceCond1_5 + priceCond1 + priceBoxes;
+  const baseTotalPrice = pricePwrCable + priceSigCable + priceCond1_5 + priceCond1 + priceBoxes;
+  const totalTanks = Math.max(0, Number.isFinite(A2) ? A2 : 0);
+  const tanksAdjustment =
+    totalTanks === 1 ? -200 : totalTanks === 2 ? 0 : totalTanks >= 3 ? 200 * (totalTanks - 2) : 0;
+
+  const totalPrice = baseTotalPrice + tanksAdjustment;
   const totalManhours = lenCond1_5 + lenCond1;
 
   return { totalPrice, totalManhours };

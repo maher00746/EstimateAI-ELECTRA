@@ -1,7 +1,6 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
-  BuildSummary,
   AttributeMap,
   AttributeValue,
   ExtractedItem,
@@ -13,15 +12,11 @@ import type {
   PriceMapping,
   PriceListRow,
   AtgTotals,
-  ElectricalTotals,
   ElectricalCalcRequest,
   InstallationInputs,
   InstallationLocation,
 } from "./types";
-import type { PaginatedResponse } from "./services/api";
 import {
-  fetchKnowledgeBase,
-  fetchStats,
   uploadMultipleEstimates,
   extractEstimates,
   createBuildFromTemplate,
@@ -34,12 +29,10 @@ import {
   priceMap,
   fetchPriceList,
   fetchAtgTotals,
-  fetchElectricalTotals,
   calculateElectrical,
 } from "./services/api";
 import { useAuth } from "./contexts/AuthContext";
 
-const ITEMS_PER_PAGE = 10;
 const COMPANY_LOGO_URL = "/company.png";
 const COMPANY_NAME = "Nesma & Partners";
 const CONTACT_NAME = "Abdel Rahman Thalji";
@@ -62,7 +55,7 @@ const STEP_ORDER: Record<EstimateStep, number> = {
   estimate: 5,
 };
 
-type AppPage = "knowledge" | "new-estimate" | "drafts";
+type AppPage = "new-estimate" | "drafts";
 type PricingAccordionId = "items" | "electrical" | "atg" | "installation";
 
 const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
@@ -73,7 +66,7 @@ const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
 ];
 
 const ELECTRICAL_INPUT_DEFAULTS: Array<{ key: string; label: string; value: number }> = [
-  { key: "a2", label: "Tanks total quantity (A2)", value: 0 },
+  { key: "a2", label: "Total Tanks", value: 2 },
   { key: "x", label: "Between Storage Tank and Control Panel", value: 30 },
   { key: "y", label: "Between Day tank and Control Panel", value: 100 },
   { key: "z", label: "Between Filling Point and Control Panel", value: 100 },
@@ -125,13 +118,6 @@ const buildDefaultElectricalInputs = () =>
     acc[curr.key] = curr.value.toString();
     return acc;
   }, {});
-
-// Helper function to get attribute value (handles both old and new format)
-function getAttributeValue(attr: string | AttributeValue | undefined): string {
-  if (!attr) return "—";
-  if (typeof attr === 'string') return attr;
-  return attr.value || "—";
-}
 
 function renderCell(value: string | undefined) {
   const text = value && value.trim() ? value : "—";
@@ -549,53 +535,6 @@ function TemplateEditorModal({
   );
 }
 
-function ExtractedItemsTable({ file }: { file: { fileName: string; items: ExtractedItem[] } }) {
-  const resize = useColumnResize();
-
-  return (
-    <div className="table-wrapper" style={{ marginTop: "1rem" }}>
-      <div className="panel__header" style={{ marginBottom: "0.5rem" }}>
-        <p className="eyebrow">File</p>
-        <h4>{file.fileName}</h4>
-      </div>
-      <table className="matches-table resizable-table">
-        <thead>
-          <tr>
-            <ResizableTh resize={resize} index={0}>Item #</ResizableTh>
-            <ResizableTh resize={resize} index={1}>Description</ResizableTh>
-            <ResizableTh resize={resize} index={2}>Capacity</ResizableTh>
-            <ResizableTh resize={resize} index={3}>Size</ResizableTh>
-            <ResizableTh resize={resize} index={4}>Quantity</ResizableTh>
-            <ResizableTh resize={resize} index={5}>Unit</ResizableTh>
-            <ResizableTh resize={resize} index={6}>Full description</ResizableTh>
-          </tr>
-        </thead>
-        <tbody>
-          {file.items?.length ? (
-            file.items.map((item, idx) => (
-              <tr key={`${file.fileName}-${item.item_number || idx}`} className="matches-table__row">
-                <td>{renderCell(item.item_number)}</td>
-                <td>{renderCell(item.description)}</td>
-                <td>{renderCell(item.capacity)}</td>
-                <td>{renderCell(item.size)}</td>
-                <td>{renderCell(item.quantity)}</td>
-                <td>{renderCell(item.unit)}</td>
-                <td>{renderCell(item.full_description)}</td>
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <td colSpan={7} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
-                No items returned for this file.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function EditableItemsTable({
   items,
   onChange,
@@ -716,11 +655,6 @@ function EditableItemsTable({
 
 function App() {
   const { user, logout } = useAuth();
-  const [knowledgeBase, setKnowledgeBase] = useState<BuildSummary[]>([]);
-  const [totalBuilds, setTotalBuilds] = useState(0);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loadingHistory, setLoadingHistory] = useState(true);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -746,11 +680,8 @@ function App() {
   const [extractedFiles, setExtractedFiles] = useState<Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string }>>([]);
   const [feedback, setFeedback] = useState<string>("");
   const [loadingStage, setLoadingStage] = useState(0);
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
-  const [selectedTemplateAttributes, setSelectedTemplateAttributes] = useState<AttributeMap>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activePage, setActivePage] = useState<AppPage>("knowledge");
+  const [activePage, setActivePage] = useState<AppPage>("new-estimate");
   const [activeEstimateStep, setActiveEstimateStep] = useState<EstimateStep>("upload");
   const [boqResults, setBoqResults] = useState<{ boqItems: ExtractedItem[]; comparisons: BoqComparisonRow[] }>({ boqItems: [], comparisons: [] });
   const [boqExtractLoading, setBoqExtractLoading] = useState(false);
@@ -1135,16 +1066,6 @@ function App() {
     void refreshDrafts();
   }, [activePage, refreshDrafts]);
 
-  const maxAttributesInFile = useMemo(() => {
-    if (knowledgeBase.length === 0) return 0;
-    return Math.max(...knowledgeBase.map(build => Object.keys(build.attributes).length));
-  }, [knowledgeBase]);
-
-  useEffect(() => {
-    refreshHistory();
-    loadStats();
-  }, [currentPage]);
-
   useEffect(() => {
     // When comparisons update from a new run, clear selections.
     // Skip clearing when we are hydrating a draft.
@@ -1152,29 +1073,6 @@ function App() {
     setComparisonSelections({});
     setPricingSelections([]);
   }, [boqResults.comparisons]);
-
-  const loadStats = async () => {
-    try {
-      const stats = await fetchStats();
-      setTotalBuilds(stats.totalBuilds);
-    } catch (error) {
-      console.error("Failed to load stats", error);
-    }
-  };
-
-  const refreshHistory = async () => {
-    setLoadingHistory(true);
-    try {
-      const response: PaginatedResponse = await fetchKnowledgeBase(ITEMS_PER_PAGE, currentPage);
-      setKnowledgeBase(response.data);
-      setTotalBuilds(response.totalCount);
-      setTotalPages(response.totalPages);
-    } catch (error) {
-      setFeedback("Unable to load knowledge base.");
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
 
   const loadingMessages = [
     "AI is Extracting the Attributes..."
@@ -1310,15 +1208,6 @@ function App() {
     }
   };
 
-
-  const handleRowClick = (linkToFile: string) => {
-    window.open(linkToFile, "_blank");
-  };
-
-  const handleUseAsTemplate = (attributes: AttributeMap) => {
-    setSelectedTemplateAttributes(attributes);
-    setIsTemplateEditorOpen(true);
-  };
 
   const handleComparisonSelect = (rowIndex: number, source: "drawing" | "boq") => {
     setComparisonSelections(prev => ({ ...prev, [rowIndex]: source }));
@@ -1491,7 +1380,6 @@ function App() {
     setBoqEnrichLoading(true);
     try {
       const resp = await enrichBoqItems(items);
-      console.log("[boq-enrich] client received items:", resp.items?.length, "raw:", resp.rawContent?.slice?.(0, 200));
       if (resp.items?.length) {
         setBoqResults(prev => ({ ...prev, boqItems: resp.items, comparisons: [] }));
         setComparisonSelections({});
@@ -1516,7 +1404,7 @@ function App() {
   const runExtract = useCallback(
     async (hasDrawings: boolean, hasBoq: boolean) => {
       setMatching(hasDrawings);
-      setProcessingAI(hasDrawings);
+      setProcessingAI(hasDrawings || hasBoq);
       setReviewStepActive(false);
       setActiveEstimateStep("upload");
       setFeedback("");
@@ -1612,7 +1500,7 @@ function App() {
     const hasBoq = !!pendingBoqFile;
 
     if (!hasDrawings && !hasBoq) {
-      setFeedback("Upload drawings or BOQ to start a review.");
+      setFeedback("Upload a BOQ file to start a review (drawings optional).");
       setTimeout(() => setFeedback(""), 3000);
       return;
     }
@@ -1813,17 +1701,23 @@ function App() {
   };
 
   const pricingTotalsSum = useMemo(() => {
+    // Min Selling Price = sum of all "Total Price" values across pricing sections
     const itemsTotal = pricingSelections.reduce((sum, entry) => {
-      const computedTotal = computeTotalPrice(entry.item.unit_price, entry.item.quantity);
-      const totalPrice = entry.item.total_price ?? computedTotal;
+      const totalPrice = entry.item.total_price ?? computeTotalPrice(entry.item.unit_price, entry.item.quantity);
       return sum + parseNumeric(totalPrice);
     }, 0);
+
     const electricalTotal = parseNumeric(
       electricalRow.totalPrice || computeTotalPrice(electricalRow.unitPrice, electricalRow.qty)
     );
+
     const atgTotal = parseNumeric(atgRow.totalPrice || computeTotalPrice(atgRow.unitPrice, atgRow.qty));
-    const installationTotal = parseNumeric(computeTotalPrice(installationUnitPriceNumber, "1"));
-    return itemsTotal + electricalTotal + atgTotal + installationTotal;
+
+    const installationPrice = parseNumeric(
+      isRemoteLocation ? installationTotals.priceRemote : installationTotals.priceRiyadh
+    );
+
+    return itemsTotal + electricalTotal + atgTotal + installationPrice;
   }, [
     pricingSelections,
     electricalRow.totalPrice,
@@ -1832,7 +1726,9 @@ function App() {
     atgRow.totalPrice,
     atgRow.unitPrice,
     atgRow.qty,
-    installationUnitPriceNumber,
+    isRemoteLocation,
+    installationTotals.priceRemote,
+    installationTotals.priceRiyadh,
   ]);
 
   const minSellingPriceNumber = parseNumeric(minSellingPrice);
@@ -2610,16 +2506,6 @@ function App() {
         <nav className="sidebar__nav">
           <button
             type="button"
-            className={`nav-link ${activePage === "knowledge" ? "is-active" : ""}`}
-            onClick={() => setActivePage("knowledge")}
-          >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M3 4h14M3 10h14M3 16h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            <span>Knowledge Base</span>
-          </button>
-          <button
-            type="button"
             className={`nav-link ${activePage === "new-estimate" ? "is-active" : ""}`}
             onClick={handleStartNewEstimate}
           >
@@ -2698,25 +2584,23 @@ function App() {
               </div>
               <div className="modal__body">
                 <div className="electrical-inputs-grid">
-                  {ELECTRICAL_INPUT_DEFAULTS
-                    .filter(item => item.key !== "a2")
-                    .map((item) => (
-                      <label key={item.key} className="electrical-input">
-                        <span className="electrical-input__label">{item.label}</span>
-                        <input
-                          className="form-input electrical-input__control"
-                          type="number"
-                          step="1"
-                          value={electricalInputs[item.key] ?? ""}
-                          onChange={(e) =>
-                            setElectricalInputs(prev => ({
-                              ...prev,
-                              [item.key]: e.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                    ))}
+                  {ELECTRICAL_INPUT_DEFAULTS.map((item) => (
+                    <label key={item.key} className="electrical-input">
+                      <span className="electrical-input__label">{item.label}</span>
+                      <input
+                        className="form-input electrical-input__control"
+                        type="number"
+                        step="1"
+                        value={electricalInputs[item.key] ?? ""}
+                        onChange={(e) =>
+                          setElectricalInputs(prev => ({
+                            ...prev,
+                            [item.key]: e.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  ))}
                 </div>
                 {electricalError && (
                   <div className="modal__error">{electricalError}</div>
@@ -2873,107 +2757,6 @@ function App() {
               );
             })}
           </div>
-        )}
-
-        {activePage === "knowledge" && (
-          <section id="knowledge" className="panel">
-            <div className="panel__header">
-              <div>
-                <p className="eyebrow">Knowledge Base</p>
-                <h2>Estimates Library</h2>
-              </div>
-              <button type="button" onClick={() => refreshHistory()} disabled={loadingHistory}>
-                {loadingHistory ? "Refreshing…" : "Refresh"}
-              </button>
-            </div>
-
-            {loadingHistory ? (
-              <div className="loading-container">
-                <div className="loading-spinner">
-                  <svg width="48" height="48" viewBox="0 0 48 48" className="spinner">
-                    <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="100" strokeDashoffset="25" strokeLinecap="round" />
-                  </svg>
-                </div>
-                <p className="loading-text">Loading Knowledge Base...</p>
-              </div>
-            ) : knowledgeBase.length === 0 ? (
-              <p className="empty-state">No builds yet. Upload one to get started.</p>
-            ) : (
-              <>
-                <div className="table-wrapper">
-                  <table className="kb-table kb-table--compact resizable-table">
-                    <thead>
-                      <tr>
-                        <ResizableTh resize={kbResize} index={0} className="kb-table__col-filename">File Name</ResizableTh>
-                        <ResizableTh resize={kbResize} index={1} className="kb-table__col-date">Date</ResizableTh>
-                        <ResizableTh resize={kbResize} index={2}>CPU</ResizableTh>
-                        <ResizableTh resize={kbResize} index={3}>CPU Cooler</ResizableTh>
-                        <ResizableTh resize={kbResize} index={4}>Motherboard</ResizableTh>
-                        <ResizableTh resize={kbResize} index={5}>Memory</ResizableTh>
-                        <ResizableTh resize={kbResize} index={6}>Storage</ResizableTh>
-                        <ResizableTh resize={kbResize} index={7}>Video Card</ResizableTh>
-                        <ResizableTh resize={kbResize} index={8}>Case</ResizableTh>
-                        <ResizableTh resize={kbResize} index={9}>Power Supply</ResizableTh>
-                        <ResizableTh resize={kbResize} index={10}>Operating System</ResizableTh>
-                        <ResizableTh resize={kbResize} index={11}>Monitor</ResizableTh>
-                        <ResizableTh resize={kbResize} index={12} className="kb-table__col-price">Price</ResizableTh>
-                        <ResizableTh resize={kbResize} index={13} className="kb-table__col-id">ID</ResizableTh>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {knowledgeBase.map((build) => (
-                        <tr
-                          key={build.id}
-                          onClick={() => handleRowClick(build.link_to_file)}
-                          className="kb-table__row"
-                        >
-                          <td className="kb-table__filename">{renderCell(build.originalName)}</td>
-                          <td className="kb-table__date">{renderCell(new Date(build.createdAt).toLocaleDateString())}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes.CPU || build.attributes.cpu))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes["CPU Cooler"]))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes.Motherboard))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes.Memory || build.attributes.memory))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes.Storage || build.attributes.storage))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes["Video Card"] || build.attributes.gpu))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes.Case))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes["Power Supply"]))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes["Operating System"]))}</td>
-                          <td>{renderCell(getAttributeValue(build.attributes.Monitor))}</td>
-                          <td className="kb-table__price">{renderCell(build.totalPrice || "—")}</td>
-                          <td className="kb-table__id">{renderCell(build.requestId.slice(0, 8))}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="pagination">
-                  <button
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    disabled={currentPage === 1 || loadingHistory}
-                  >
-                    Previous
-                  </button>
-                  <span>Page {currentPage} of {totalPages}</span>
-                  <button
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    disabled={currentPage === totalPages || loadingHistory}
-                  >
-                    Next
-                  </button>
-                </div>
-              </>
-            )}
-
-            <div className="panel__footer">
-              <button
-                type="button"
-                className="btn-upload"
-                onClick={() => setIsUploadModalOpen(true)}
-              >
-                + Add to the Knowledge Base
-              </button>
-            </div>
-          </section>
         )}
 
         {activePage === "drafts" && (
@@ -4246,7 +4029,7 @@ function App() {
                         ? `BOQ selected: ${selectedBoqFileName}`
                         : "Drag & drop or browse BOQ (PDF, Excel, Images)"}
                     </p>
-                    <p className="dropzone__hint">Single BOQ file; extraction runs when you review.</p>
+                    <p className="dropzone__hint">Upload a single BOQ file to proceed; drawings are optional.</p>
                   </div>
                 </label>
               </div>
@@ -4291,26 +4074,6 @@ function App() {
         {feedback && <p className="feedback">{feedback}</p>}
       </main>
 
-      <UploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        onSuccess={() => {
-          refreshHistory();
-          loadStats();
-        }}
-      />
-
-      <TemplateEditorModal
-        isOpen={isTemplateEditorOpen}
-        onClose={() => setIsTemplateEditorOpen(false)}
-        onSuccess={() => {
-          refreshHistory();
-          loadStats();
-          setFeedback("Build saved successfully!");
-          setTimeout(() => setFeedback(""), 3000);
-        }}
-        initialAttributes={selectedTemplateAttributes}
-      />
       <button
         type="button"
         className={`sidebar-toggle sidebar-toggle--floating ${isSidebarOpen ? "is-open" : ""}`}

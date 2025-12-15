@@ -4,6 +4,7 @@ import multer from "multer";
 import path from "path";
 import { randomUUID } from "crypto";
 import fs from "fs/promises";
+import xlsx from "xlsx";
 import PDFDocument from "pdfkit";
 import { config } from "../config";
 import { ingestBuild } from "../modules/ingestion/ingestionService";
@@ -613,7 +614,22 @@ router.post("/boq/extract", upload.single("boqFile"), async (req, res, next) => 
     let aiRaw = "";
     const ext = path.extname(req.file.originalname).toLowerCase();
     try {
-      if (ext === ".pdf") {
+      const excelExts = new Set([".xlsx", ".xls", ".csv"]);
+      if (excelExts.has(ext)) {
+        // Convert Excel/CSV to CSV text for OpenAI
+        const workbook = xlsx.readFile(req.file.path);
+        const parts: string[] = [];
+        for (const sheetName of workbook.SheetNames) {
+          const sheet = workbook.Sheets[sheetName];
+          if (!sheet) continue;
+          const csv = xlsx.utils.sheet_to_csv(sheet, { blankrows: false });
+          if (csv.trim()) {
+            parts.push(`Sheet: ${sheetName}\n${csv}`);
+          }
+        }
+        const csvText = parts.join("\n\n");
+        ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text: csvText, fileName: req.file.originalname }));
+      } else if (ext === ".pdf") {
         const text = await extractTextFromPdf(req.file.path);
         ({ items: aiItems, rawContent: aiRaw } = await extractBoqWithOpenAI({ text, fileName: req.file.originalname }));
       } else if (ext === ".docx") {
