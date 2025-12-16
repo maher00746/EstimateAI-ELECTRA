@@ -214,6 +214,7 @@ Standard inch to mm conversions (CRITICAL - use these exact values):
 - Return ALL valves of that type with matching size
 
 **PIPE / PIPING:**
+- Ectract the schedule from the description, if available, Match by Schedule (Sch.) 40 or 80, if available
 - Match by SIZE (in mm) and material type if specified
 - Return ALL matching pipe entries for that size
 

@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
 import { config } from "../config";
 import { User } from "../modules/storage/userModel";
 import { authenticate, AuthRequest } from "../middleware/auth";
@@ -13,14 +13,14 @@ router.post("/register", async (req: Request, res: Response, next: NextFunction)
 
     // Validation
     if (!username || !email || !password) {
-      return res.status(400).json({ 
-        message: "Username, email, and password are required" 
+      return res.status(400).json({
+        message: "Username, email, and password are required"
       });
     }
 
     if (password.length < 6) {
-      return res.status(400).json({ 
-        message: "Password must be at least 6 characters long" 
+      return res.status(400).json({
+        message: "Password must be at least 6 characters long"
       });
     }
 
@@ -30,8 +30,8 @@ router.post("/register", async (req: Request, res: Response, next: NextFunction)
     });
 
     if (existingUser) {
-      return res.status(409).json({ 
-        message: "User with this username or email already exists" 
+      return res.status(409).json({
+        message: "User with this username or email already exists"
       });
     }
 
@@ -45,17 +45,17 @@ router.post("/register", async (req: Request, res: Response, next: NextFunction)
     await user.save();
 
     // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id.toString() },
-      config.jwtSecret,
-      { expiresIn: config.jwtExpiresIn }
-    );
+    const tokenOptions: SignOptions = {
+      expiresIn: config.jwtExpiresIn as SignOptions["expiresIn"],
+    };
+
+    const token = jwt.sign({ userId: user.id }, config.jwtSecret as Secret, tokenOptions);
 
     res.status(201).json({
       message: "User registered successfully",
       token,
       user: {
-        id: user._id,
+        id: user.id,
         username: user.username,
         email: user.email,
       },
@@ -72,8 +72,8 @@ router.post("/login", async (req: Request, res: Response, next: NextFunction) =>
 
     // Validation
     if (!username || !password) {
-      return res.status(400).json({ 
-        message: "Username and password are required" 
+      return res.status(400).json({
+        message: "Username and password are required"
       });
     }
 
@@ -83,8 +83,8 @@ router.post("/login", async (req: Request, res: Response, next: NextFunction) =>
     });
 
     if (!user) {
-      return res.status(401).json({ 
-        message: "Invalid username or password" 
+      return res.status(401).json({
+        message: "Invalid username or password"
       });
     }
 
@@ -92,23 +92,23 @@ router.post("/login", async (req: Request, res: Response, next: NextFunction) =>
     const isPasswordValid = await user.comparePassword(password);
 
     if (!isPasswordValid) {
-      return res.status(401).json({ 
-        message: "Invalid username or password" 
+      return res.status(401).json({
+        message: "Invalid username or password"
       });
     }
 
     // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id.toString() },
-      config.jwtSecret,
-      { expiresIn: config.jwtExpiresIn }
-    );
+    const tokenOptions: SignOptions = {
+      expiresIn: config.jwtExpiresIn as SignOptions["expiresIn"],
+    };
+
+    const token = jwt.sign({ userId: user.id }, config.jwtSecret as Secret, tokenOptions);
 
     res.status(200).json({
       message: "Login successful",
       token,
       user: {
-        id: user._id,
+        id: user.id,
         username: user.username,
         email: user.email,
       },

@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { login as apiLogin, register as apiRegister, verifyToken, logout as apiLogout } from "../services/api";
 
 interface User {
@@ -65,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const response = await apiLogin(username, password);
       const { token: newToken, user: userData } = response;
-      
+
       localStorage.setItem(TOKEN_KEY, newToken);
       setToken(newToken);
       setUser(userData);
@@ -78,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const response = await apiRegister(username, email, password);
       const { token: newToken, user: userData } = response;
-      
+
       localStorage.setItem(TOKEN_KEY, newToken);
       setToken(newToken);
       setUser(userData);
