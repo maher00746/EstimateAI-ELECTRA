@@ -19,3 +19,5 @@ const PromptSchema = new Schema<PromptDocument>(
 
 export const PromptModel =
   mongoose.models.Prompt ?? mongoose.model<PromptDocument>("Prompt", PromptSchema);
+
+

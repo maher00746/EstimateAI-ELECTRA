@@ -16,3 +16,5 @@ export async function upsertPrompt(key: string, content: string): Promise<Prompt
   const prompt = new PromptModel({ key, content });
   return prompt.save();
 }
+
+

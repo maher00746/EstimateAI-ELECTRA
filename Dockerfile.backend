@@ -9,6 +9,7 @@ RUN npm ci
 FROM deps AS builder
 COPY tsconfig.json ./
 COPY src ./src
+COPY data ./data
 RUN npm run build
 
 FROM base AS runner
@@ -23,8 +24,12 @@ RUN npm ci --omit=dev
 
 # Copy compiled output
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/data ./data
+
 
 EXPOSE 4000
 CMD ["node", "dist/server.js"]
+
+
 
 
