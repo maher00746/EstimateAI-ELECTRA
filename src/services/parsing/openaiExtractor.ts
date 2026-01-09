@@ -7,152 +7,85 @@ export const DRAWING_SYSTEM_PROMPT =
   "You are a rules-aware parser. Always return JSON, and never add explanatory prose outside the JSON.";
 
 export const DRAWING_EXTRACTION_PROMPT = `
-You are a senior MEP estimator specializing in fuel systems. Extract every measurable component from the supplied MEP drawings and return them in structured JSON format. Be thorough and accurate.
+**Role:** You are a Senior Estimation Engineer for an exhibition stand building company.
+**Task:** Parse the provided architectural drawings/renders and generate a Bill of Quantities (BOQ).
+**Output Format:** A strict JSON Array of Objects.
 
-═══════════════════════════════════════════════════════════════════
-EXTRACTION SCOPE (in priority order)
-═══════════════════════════════════════════════════════════════════
+## 1. Estimation Methodology & Rules
+You must strictly follow these engineering assumptions derived from company standards. Do not merely describe the image; translate it into construction line items.
 
-1. TANKS
-   - Storage Tanks (extract capacity in Liters or Gallons)
-   - Day Tanks (extract capacity in Liters or Gallons)
+### Section A: Flooring (Mandatory)
+Regardless of the drawing details, every booth must have these foundational items calculated based on the total booth area (L * W).
+1.  **Raised Platform:** Always A.1.
+    *   *Desc:* "Raised platform"
+    *   *Finish:* "Wooden structure, MDF, Plywood framing"
+    *   *Dim:* Total Area (Lm * Wm * 0.10mH)
+    *   *UOM:* SQM
+2.  **Floor Finish:** A.2 or A.4 (Sequence).
+    *   *Finish:* Detect from render. If wood look: "Glossy finish laminate". If fabric: "Galaxy grade Carpet".
+    *   *UOM:* SQM
+3.  **Plastic Protection:** Always the last item in Section A.
+    *   *Desc:* "Plastic protection"
+    *   *Finish:* "Consumables"
+    *   *UOM:* SQM (Matches total area)
+4.  **Skirting:** Perimeter of open sides.
+    *   *Desc:* "Skirting"
+    *   *Dim:* 0.10mH
+    *   *Finish:* "MDF, Spray paint finish"
+    *   *UOM:* LM (Linear Meter)
 
-2. PUMPS
-   - Fuel Pumps / Transfer Pumps (extract GPM/LPM flow rate, PSI pressure)
+### Section B: Wall Structure & Ceiling
+Break down large structures into specific functional components. Do not group all walls into one line.
+*   **Dimensions:** If not explicitly written, estimate based on visual scale (Standard Height: 3.0m - 4.5m, Standard Depth: 0.10m - 0.20m).
+*   **Descriptions:** Use specific names: "Back wall", "Meeting room wall", "Partition wall", "Offset panels", "Ceiling beams".
+*   **Finishes:**
+    *   **Standard Wall:** "Wooden structure, MDF, Roller paint (Bothside/Oneside)".
+    *   **Features:** If the render shows glowing lines, add: "...with LED strip light incorporated".
+    *   **Ceiling:** "Wooden structure, MDF, Roller paint finish".
 
-3. VALVES (count ALL instances by size)
-   - BV = Ball Valve
-   - CV = Check Valve  
-   - Gate Valve
-   - Butterfly Valve
-   - Relief Valve
+### Section C: Custom-made Items (Joinery/Carpentry)
+Includes all *built* furniture (Reception desks, podiums, totems, bar counters).
+*   **Desc:** Item Name (e.g., "Reception Table", "Display counter 1").
+*   **Finish:** High-quality finish is assumed. "Wooden structure, MDF, Spray paint finish".
+*   **Logos on Counters:** If a logo is on the furniture, add: "with vinyl sticker logo on front".
+*   **Lighting:** If under-lit, add: "with LED strip light".
 
-4. PIPING (measure total length by size/material)
-   - All pipe runs with different diameters
-   - Material type if specified (steel, copper, HDPE, etc.)
+### Section D: Graphics
+Identify every logo visible in the renders.
+*   **Locations:** "Logo on ceiling", "Logo on Bulkhead", "Logo on back wall".
+*   **Finish Logic:**
+    *   **Glowing/Thick:** "Acrylic Front lit Logo".
+    *   **Thick/No Glow:** "MDF spray paint nonlit Logo".
+    *   **Flat/Small:** "Vinyl sticker".
+*   **Dimensions:** Estimate text bounding box (L * H).
 
-5. ACCESSORIES
-   - Filling Points / Fill Points
-   - Strainers (Y-strainer, etc.)
-   - Flexible Hoses / Flexible Connectors
-   - Tank Vents / Vent Caps
-   - Unions / Flanges / Couplings
+### Section E: Furniture (Rental)
+Loose/Moveable items (Chairs, Tables, Sofas, Fridges, Racks).
+*   **Desc:** Item Name + "- Rental" (e.g., "Bar Stool - Rental").
+*   **Finish:** Standard text: "Selected from the standard range and subject to availability".
+*   **UOM:** UNIT or NOS.
 
-6. INSTRUMENTATION & CONTROLS
-   - Level Probes / Level Transmitters
-   - Level Switches / Float Switches
-   - Leak Sensors / Leak Detection
-   - Overfill Alarms / High Level Alarms
-   - Pressure Gauges
-   - Flow Meters
+### Section F: AV (Audio Visual)
+*   **Desc:** Item Name + "- Rental" (e.g., "65 inch TV - Rental").
+*   **LED Walls:** Calculate size (L * H). Finish: "P 2.6 LED".
+*   **UOM:** UNIT.
 
-7. CONTROL SYSTEMS
-   - Master Control Panel (MCP)
-   - Local Control Panels
-   - Junction Boxes
+## 2. JSON Structure Definitions
+Return **only** the JSON array. Do not include markdown formatting or conversational text.
 
-8. ELECTRICAL MATERIALS
-   - Conduits (with sizes)
-   - Wiring / Cables (with sizes)
-   - Cable Trays
+**JSON Key Definitions:**
+*   section_code: "A", "B", "C", "D", "E", or "F".
+*   item_no: E.g., "A.1", "B.3".
+*   description: The item name.
+*   dimensions: String format " LmL * WmW * HmH". If N/A, use empty string.
+*   finishes: The material/construction spec.
+*   quantity: Number (Float or Integer).
+*   uom: "SQM", "LM", "UNIT", "NOS".
 
-═══════════════════════════════════════════════════════════════════
-SIZE CONVERSION TABLE (use these exact values)
-═══════════════════════════════════════════════════════════════════
-
-| Inches | mm  |     | Inches | mm  |
-|--------|-----|-----|--------|-----|
-| 1/2"   | 15  |     | 3"     | 80  |
-| 3/4"   | 20  |     | 4"     | 100 |
-| 1"     | 25  |     | 5"     | 125 |
-| 1-1/4" | 32  |     | 6"     | 150 |
-| 1-1/2" | 40  |     | 8"     | 200 |
-| 2"     | 50  |     | 10"    | 250 |
-| 2-1/2" | 65  |     | 12"    | 300 |
-
-═══════════════════════════════════════════════════════════════════
-EXTRACTION RULES
-═══════════════════════════════════════════════════════════════════
-
-1. COUNTING & AGGREGATION
-   - Group identical items by type AND size (e.g., "BV 80mm" counted separately from "BV 100mm")
-   - Count every occurrence shown on the drawing
-   - For valves: determine size from the connecting pipe diameter
-   - For pipes: sum total linear length per size
-
-2. SIZE HANDLING
-   - Convert ALL inch sizes to mm using the table above
-   - Format sizes as "XXmm" (e.g., "80mm", "100mm")
-   - Keep capacity values as-is (e.g., "10000L", "500 Gal")
-
-3. UNITS
-   - Use "Nos" for discrete items (tanks, valves, pumps, sensors, etc.)
-   - Use "LM" (Linear Meters) for pipes and conduits
-   - Use "M" for cables/wiring
-
-4. EXCLUSIONS (DO NOT EXTRACT)
-   - Civil works: concrete pads, foundations, walls, trenches
-   - Structural elements: supports, hangers, brackets
-   - Labels/legends without physical items
-
-═══════════════════════════════════════════════════════════════════
-OUTPUT FORMAT
-═══════════════════════════════════════════════════════════════════
-
-Return a JSON array. Each item must have these fields:
-
-[
-  {
-    "item_number": "1",
-    "item_type": "STORAGE_TANK",
-    "description": "Storage Tank",
-    "capacity": "10000L",
-    "size": "",
-    "quantity": "1",
-    "unit": "Nos"
-  },
-  {
-    "item_number": "2", 
-    "item_type": "BALL_VALVE",
-    "description": "Ball Valve (BV)",
-    "capacity": "",
-    "size": "80mm",
-    "quantity": "4",
-    "unit": "Nos"
-  },
-  {
-    "item_number": "3",
-    "item_type": "PIPE",
-    "description": "Steel Pipe",
-    "capacity": "",
-    "size": "100mm",
-    "quantity": "45",
-    "unit": "LM"
-  }
-]
-
-Field definitions:
-- item_number: Sequential number starting from "1"
-- item_type: Category code (STORAGE_TANK, DAY_TANK, PUMP, EMERGENCY_VENT, BALL_VALVE, CHECK_VALVE, GATE_VALVE, PIPE, STRAINER, FLEXIBLE_HOSE, VENT, LEVEL_INDICATOR, LEVEL_SWITCH, LEAK_SENSOR, CONTROL_PANEL, FILLING_POINT, CONDUIT, CABLE, OTHER)
-- description: Clear item name as shown on drawing
-- capacity: Tank capacity or pump flow rate (leave empty if not applicable)
-- size: Diameter in mm or dimension (leave empty if not applicable)
-- quantity: Total count or total length
-- unit: "Nos" or "LM" or "M"
-
-═══════════════════════════════════════════════════════════════════
-VERIFICATION CHECKLIST
-═══════════════════════════════════════════════════════════════════
-
-Before returning your response, verify:
-□ All tanks extracted with capacity
-□ All pumps extracted with GPM/PSI
-□ All BV and CV counted by size
-□ All pipe runs measured by size
-□ All sizes converted to mm
-□ Quantities are totals (not per-line)
-□ No civil items included
-□ JSON is valid and complete
+## 3. Input Handling
+If the input PDF contains specific text lists (e.g., "Furniture List: 10 chairs"), prioritize that count. If only images are provided, estimate counts visually.
+## 4. Dimentions
+if the Dimentions are provided in the drawings for each item, or it's written in the text, make sure to use the provided dimentions.
 `.trim();
 
 export async function getDrawingExtractionPrompt(): Promise<string> {
@@ -176,6 +109,18 @@ export async function parseJsonFromMessage(message: string): Promise<unknown> {
   return JSON.parse(jsonMatch);
 }
 
+function toOptionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value.toString() : undefined;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  return String(value);
+}
+
 export function toItemsArray(payload: unknown): ExtractedItem[] {
   const items = Array.isArray(payload)
     ? payload
@@ -186,30 +131,62 @@ export function toItemsArray(payload: unknown): ExtractedItem[] {
 
   return items
     .filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item))
-    .map((record) => ({
-      item_number: record.item_number as string | undefined,
-      item_type: record.item_type as string | undefined,
-      description: record.description as string | undefined,
-      capacity: record.capacity as string | undefined,
-      size: record.size as string | undefined,
-      quantity: record.quantity as string | undefined,
-      unit: record.unit as string | undefined,
-      full_description: record.full_description as string | undefined,
-    }));
+    .map((record) => {
+      const sectionCode =
+        toOptionalString((record as Record<string, unknown>).section_code) ??
+        toOptionalString((record as Record<string, unknown>).sectionCode) ??
+        toOptionalString((record as Record<string, unknown>).section);
+      const itemNo =
+        toOptionalString((record as Record<string, unknown>).item_no) ??
+        toOptionalString((record as Record<string, unknown>).itemNo) ??
+        toOptionalString(record.item_number);
+      const dimensions =
+        toOptionalString((record as Record<string, unknown>).dimensions) ?? toOptionalString(record.size);
+      const finishes =
+        toOptionalString((record as Record<string, unknown>).finishes) ??
+        toOptionalString((record as Record<string, unknown>).finish);
+      const unit = toOptionalString(record.unit ?? (record as Record<string, unknown>).uom);
+
+      return {
+        section_code: sectionCode,
+        section_name: toOptionalString((record as Record<string, unknown>).section_name ?? (record as Record<string, unknown>).sectionName),
+        item_no: itemNo,
+        item_number: itemNo ?? toOptionalString(record.item_number),
+        item_type: toOptionalString(record.item_type),
+        description: toOptionalString(record.description),
+        capacity: toOptionalString(record.capacity),
+        dimensions,
+        size: dimensions ?? toOptionalString(record.size),
+        quantity: toOptionalString(record.quantity),
+        finishes,
+        unit,
+        remarks: toOptionalString(record.remarks),
+        unit_price: toOptionalString(record.unit_price),
+        total_price: toOptionalString(record.total_price),
+        location: toOptionalString(record.location),
+        unit_manhour: toOptionalString(record.unit_manhour),
+        total_manhour: toOptionalString(record.total_manhour),
+        full_description: toOptionalString(record.full_description ?? finishes),
+      };
+    });
 }
 
 function structuredItemsToAttributeMap(items: ExtractedItem[]): AttributeMap {
   return items.reduce<AttributeMap>((acc, item, index) => {
-    const label = item.item_number || item.description || `Item ${index + 1}`;
+    const label = item.item_number || item.item_no || item.description || `Item ${index + 1}`;
+
+    const normalizedSize = item.dimensions ?? item.size;
 
     const parts: string[] = [];
+    if (item.section_code) parts.push(`Section ${item.section_code}`);
     if (item.item_type) parts.push(`[${item.item_type}]`);
     if (item.description) parts.push(item.description);
     if (item.capacity) parts.push(`Capacity: ${item.capacity}`);
-    if (item.size) parts.push(`Size: ${item.size}`);
+    if (normalizedSize) parts.push(`Size: ${normalizedSize}`);
     if (item.quantity || item.unit) {
       parts.push(`Qty: ${item.quantity ?? ""}${item.unit ? ` ${item.unit}` : ""}`.trim());
     }
+    if (item.finishes) parts.push(`Finishes: ${item.finishes}`);
     if (item.full_description) parts.push(item.full_description);
 
     acc[label] = parts.filter(Boolean).join(" | ") || "—";

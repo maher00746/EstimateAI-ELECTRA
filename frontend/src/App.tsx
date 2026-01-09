@@ -63,6 +63,17 @@ const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
   { id: "installation", label: "Installation" },
 ];
 
+const DRAWING_SECTIONS: Array<{ code: string; title: string; keywords?: string[] }> = [
+  { code: "A", title: "Flooring", keywords: ["floor"] },
+  { code: "B", title: "Wall Structure & Ceiling", keywords: ["wall", "ceiling"] },
+  { code: "C", title: "Custom-made Items", keywords: ["custom", "joinery", "carpentry"] },
+  { code: "D", title: "Graphics", keywords: ["graphic", "logo"] },
+  { code: "E", title: "Furniture", keywords: ["furniture", "rental"] },
+  { code: "F", title: "AV", keywords: ["av", "audio", "visual", "tv", "screen"] },
+];
+
+const DRAWING_SECTION_CODE_SET = new Set(DRAWING_SECTIONS.map(section => section.code));
+
 const ELECTRICAL_INPUT_DEFAULTS: Array<{ key: string; label: string; value: number }> = [
   { key: "a2", label: "Total Tanks", value: 2 },
   { key: "x", label: "Between Storage Tank and Control Panel", value: 30 },
@@ -122,10 +133,50 @@ function renderCell(value: string | undefined) {
   return <span className="cell-text" title={text}>{text}</span>;
 }
 
-function matchesDescription(item: Pick<ExtractedItem, "description" | "full_description">, query: string) {
+function matchesDescription(item: ExtractedItem, query: string) {
   const search = query.trim().toLowerCase();
   if (!search) return true;
-  return `${item.description || ""} ${item.full_description || ""}`.toLowerCase().includes(search);
+  const haystack = [
+    item.description,
+    item.full_description,
+    item.finishes,
+    item.section_code,
+    item.section_name,
+    item.item_number,
+    item.item_no,
+    item.dimensions,
+    item.size,
+  ]
+    .filter(Boolean)
+    .map(value => value?.toString().toLowerCase())
+    .join(" ");
+  return haystack.includes(search);
+}
+
+function resolveSectionCode(item: ExtractedItem): string | undefined {
+  const candidates = [
+    item.section_code,
+    item.section_name,
+    item.item_no,
+    item.item_number,
+    item.full_description,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const normalized = candidate.toString().trim();
+    if (!normalized) continue;
+    const firstChar = normalized.charAt(0).toUpperCase();
+    if (DRAWING_SECTION_CODE_SET.has(firstChar)) return firstChar;
+
+    const lower = normalized.toLowerCase();
+    const match = DRAWING_SECTIONS.find(section =>
+      section.keywords?.some(keyword => lower.includes(keyword))
+    );
+    if (match) return match.code;
+  }
+
+  return undefined;
 }
 
 function buildFinalizeEntry<S extends ItemSource>(item: ExtractedItem, source: S, fallback?: ExtractedItem): { item: ExtractedItem; source: S } {
@@ -1023,6 +1074,32 @@ function App() {
   const filteredDrawingReviewRows = useMemo(
     () => drawingReviewRows.filter(({ item }) => matchesDescription(item, drawingSearch)),
     [drawingReviewRows, drawingSearch]
+  );
+
+  const drawingSections = useMemo(
+    () => {
+      const baseSections = DRAWING_SECTIONS.map(section => ({ ...section, rows: [] as typeof drawingReviewRows }));
+      const sectionLookup = baseSections.reduce<Record<string, (typeof baseSections)[number]>>((acc, section) => {
+        acc[section.code] = section;
+        return acc;
+      }, {});
+
+      const uncategorized: typeof drawingReviewRows = [];
+
+      filteredDrawingReviewRows.forEach(row => {
+        const code = resolveSectionCode(row.item);
+        if (code && sectionLookup[code]) {
+          sectionLookup[code].rows.push(row);
+        } else {
+          uncategorized.push(row);
+        }
+      });
+
+      return uncategorized.length
+        ? [...baseSections, { code: "other", title: "Uncategorized", rows: uncategorized }]
+        : baseSections;
+    },
+    [filteredDrawingReviewRows]
   );
 
   const filteredBoqReviewRows = useMemo(
@@ -2690,106 +2767,119 @@ function App() {
                       <thead>
                         <tr>
                           <th className="checkbox-col"></th>
-                          <th>Description</th>
-                          <th>Capacity</th>
-                          <th>Size</th>
-                          <th>Quantity</th>
-                          <th>Unit</th>
+                          <th>No.</th>
+                          <th className="col--description">Description</th>
+                          <th className="col--finishes">Finishes</th>
+                          <th className="col--dimensions">Dimensions</th>
+                          <th className="col--qty">Quantity</th>
+                          <th className="col--uom">UOM</th>
                         </tr>
                       </thead>
-                      <tbody>
-                        {filteredDrawingReviewRows.length ? (
-                          filteredDrawingReviewRows.map(({ item, fileIdx, itemIdx, key }) => {
-                            const isSelected = !!selectedDrawingRows[key];
-                            const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
-                              const target = event.target as HTMLElement;
-                              if (target.closest("input, textarea, button, select")) return;
-                              setSelectedDrawingRows(prev => ({ ...prev, [key]: !prev[key] }));
-                            };
-                            return (
-                              <tr
-                                key={key}
-                                className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
-                                onClick={handleRowClick}
-                              >
-                                <td className="checkbox-col">
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      const checked = e.target.checked;
-                                      setSelectedDrawingRows(prev => ({ ...prev, [key]: checked }));
-                                    }}
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--description">
-                                  <textarea
-                                    className="form-input form-input--table finalize-textarea"
-                                    value={item.description || item.full_description || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateDrawingItemField(fileIdx, itemIdx, "description", e.target.value);
-                                    }}
-                                    placeholder="Description"
-                                    rows={1}
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--capacity">
-                                  <input
-                                    className="form-input form-input--table"
-                                    value={item.capacity || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateDrawingItemField(fileIdx, itemIdx, "capacity", e.target.value);
-                                    }}
-                                    placeholder="Capacity"
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--size">
-                                  <input
-                                    className="form-input form-input--table"
-                                    value={item.size || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateDrawingItemField(fileIdx, itemIdx, "size", e.target.value);
-                                    }}
-                                    placeholder="Size"
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--qty">
-                                  <input
-                                    className="form-input form-input--table"
-                                    value={item.quantity || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateDrawingItemField(fileIdx, itemIdx, "quantity", e.target.value);
-                                    }}
-                                    placeholder="Qty"
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--unit">
-                                  <input
-                                    className="form-input form-input--table"
-                                    value={item.unit || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateDrawingItemField(fileIdx, itemIdx, "unit", e.target.value);
-                                    }}
-                                    placeholder="Unit"
-                                  />
-                                </td>
-                              </tr>
-                            );
-                          })
-                        ) : (
-                          <tr>
-                            <td colSpan={6} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
-                              No drawing items match this description search.
+                      {drawingSections.map(section => (
+                        <tbody key={section.code || section.title}>
+                          <tr className="matches-table__section-row">
+                            <td colSpan={7} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
+                              {section.title} {section.code && `(${section.code})`} — {section.rows.length ? `${section.rows.length} item(s)` : "No items"}
                             </td>
                           </tr>
-                        )}
-                      </tbody>
+                          {section.rows.length ? (
+                            section.rows.map(({ item, fileIdx, itemIdx, key }) => {
+                              const isSelected = !!selectedDrawingRows[key];
+                              const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+                                const target = event.target as HTMLElement;
+                                if (target.closest("input, textarea, button, select")) return;
+                                setSelectedDrawingRows(prev => ({ ...prev, [key]: !prev[key] }));
+                              };
+                              const displayNumber = item.item_no || item.item_number || item.section_code || section.code || "—";
+                              return (
+                                <tr
+                                  key={key}
+                                  className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
+                                  onClick={handleRowClick}
+                                >
+                                  <td className="checkbox-col">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        const checked = e.target.checked;
+                                        setSelectedDrawingRows(prev => ({ ...prev, [key]: checked }));
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="finalize-col finalize-col--number">
+                                    <span className="cell-text" title={displayNumber}>{displayNumber}</span>
+                                  </td>
+                                  <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.description || item.full_description || ""}>
+                                    <textarea
+                                      className="form-input form-input--table finalize-textarea"
+                                      value={item.description || item.full_description || ""}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        updateDrawingItemField(fileIdx, itemIdx, "description", e.target.value);
+                                      }}
+                                      placeholder="Description"
+                                      rows={1}
+                                    />
+                                  </td>
+                                  <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.finishes || ""}>
+                                    <input
+                                      className="form-input form-input--table"
+                                      value={item.finishes || ""}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        updateDrawingItemField(fileIdx, itemIdx, "finishes", e.target.value);
+                                      }}
+                                      placeholder="Finishes"
+                                    />
+                                  </td>
+                                  <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.dimensions || item.size || ""}>
+                                    <input
+                                      className="form-input form-input--table"
+                                      value={item.dimensions || item.size || ""}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        updateDrawingItemField(fileIdx, itemIdx, "dimensions", e.target.value);
+                                        updateDrawingItemField(fileIdx, itemIdx, "size", e.target.value);
+                                      }}
+                                      placeholder="Dimensions"
+                                    />
+                                  </td>
+                                  <td className="finalize-col finalize-col--qty">
+                                    <input
+                                      className="form-input form-input--table"
+                                      value={item.quantity || ""}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        updateDrawingItemField(fileIdx, itemIdx, "quantity", e.target.value);
+                                      }}
+                                      placeholder="Qty"
+                                    />
+                                  </td>
+                                  <td className="finalize-col finalize-col--unit">
+                                    <input
+                                      className="form-input form-input--table"
+                                      value={item.unit || ""}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        updateDrawingItemField(fileIdx, itemIdx, "unit", e.target.value);
+                                      }}
+                                      placeholder="UOM"
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          ) : (
+                            <tr>
+                              <td colSpan={7} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                                No drawing items detected in this section.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      ))}
                     </table>
                   </div>
                 </div>

@@ -6,12 +6,17 @@ export interface AttributeValue {
 }
 
 export interface ExtractedItem {
+  section_code?: string;
+  section_name?: string;
+  item_no?: string;
   item_number?: string;
   item_type?: string;
   description?: string;
   capacity?: string;
+  dimensions?: string;
   size?: string;
   quantity?: string;
+  finishes?: string;
   unit?: string;
   remarks?: string;
   unit_price?: string;
