@@ -1,5 +1,6 @@
 import { config } from "../../config";
 import { AttributeMap, ExtractedItem } from "../../types/build";
+import { getPromptByKey } from "../../modules/storage/promptRepository";
 import { getOpenAiClient } from "../openai/client";
 
 export const DRAWING_SYSTEM_PROMPT =
@@ -154,6 +155,17 @@ Before returning your response, verify:
 □ JSON is valid and complete
 `.trim();
 
+export async function getDrawingExtractionPrompt(): Promise<string> {
+  try {
+    const stored = await getPromptByKey("drawing-extraction");
+    const content = stored?.content?.trim();
+    return content && content.length > 0 ? content : DRAWING_EXTRACTION_PROMPT;
+  } catch (error) {
+    console.error("[prompts] Failed to load drawing prompt, falling back to default:", error);
+    return DRAWING_EXTRACTION_PROMPT;
+  }
+}
+
 export async function parseJsonFromMessage(message: string): Promise<unknown> {
   const arrayMatch = message.match(/\[[\s\S]*\]/);
   const objectMatch = message.match(/\{[\s\S]*\}/);
@@ -210,6 +222,7 @@ export async function extractAttributesWithOpenAI(
   fileName: string
 ): Promise<{ attributes: AttributeMap; items: ExtractedItem[]; totalPrice?: string; rawContent?: string }> {
   const trimmed = rawText.replace(/\s+/g, " ");
+  const prompt = await getDrawingExtractionPrompt();
   const client = getOpenAiClient();
   const response = await client.chat.completions.create({
     model: "gpt-5.2", // drawings extractor should use the latest OpenAI model
@@ -220,7 +233,7 @@ export async function extractAttributesWithOpenAI(
       },
       {
         role: "user",
-        content: `${DRAWING_EXTRACTION_PROMPT}\n\nBuild document name: ${fileName}\n\n${trimmed}`,
+        content: `${prompt}\n\nBuild document name: ${fileName}\n\n${trimmed}`,
       },
     ],
     temperature: 0,

@@ -253,6 +253,24 @@ export async function enrichBoqItems(boqItems: ExtractedItem[]): Promise<{ items
   });
 }
 
+export interface DrawingPromptResponse {
+  key: string;
+  prompt: string;
+  updatedAt?: string | null;
+  isDefault?: boolean;
+}
+
+export async function fetchDrawingPrompt(): Promise<DrawingPromptResponse> {
+  return safeFetch(`${API_BASE}/api/prompts/drawing-extraction`);
+}
+
+export async function updateDrawingPrompt(prompt: string): Promise<DrawingPromptResponse> {
+  return safeFetch(`${API_BASE}/api/prompts/drawing-extraction`, {
+    method: "PUT",
+    body: JSON.stringify({ prompt }),
+  });
+}
+
 interface SaveDraftPayload {
   id?: string;
   name: string;

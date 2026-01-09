@@ -26,6 +26,8 @@ import {
   fetchPriceList,
   fetchAtgTotals,
   calculateElectrical,
+  fetchDrawingPrompt,
+  updateDrawingPrompt,
 } from "./services/api";
 import { useAuth } from "./contexts/AuthContext";
 
@@ -51,7 +53,7 @@ const STEP_ORDER: Record<EstimateStep, number> = {
   estimate: 5,
 };
 
-type AppPage = "new-estimate" | "drafts";
+type AppPage = "new-estimate" | "drafts" | "drawing-prompt";
 type PricingAccordionId = "items" | "electrical" | "atg" | "installation";
 
 const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
@@ -355,6 +357,12 @@ function App() {
   const [loadingStage, setLoadingStage] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activePage, setActivePage] = useState<AppPage>("new-estimate");
+  const [drawingPrompt, setDrawingPrompt] = useState("");
+  const [drawingPromptLoading, setDrawingPromptLoading] = useState(false);
+  const [drawingPromptSaving, setDrawingPromptSaving] = useState(false);
+  const [drawingPromptError, setDrawingPromptError] = useState("");
+  const [drawingPromptUpdatedAt, setDrawingPromptUpdatedAt] = useState<string | null>(null);
+  const [drawingPromptDirty, setDrawingPromptDirty] = useState(false);
   const [activeEstimateStep, setActiveEstimateStep] = useState<EstimateStep>("upload");
   const [boqResults, setBoqResults] = useState<{ boqItems: ExtractedItem[]; comparisons: BoqComparisonRow[] }>({ boqItems: [], comparisons: [] });
   const [boqExtractLoading, setBoqExtractLoading] = useState(false);
@@ -718,6 +726,27 @@ function App() {
     }
   }, []);
 
+  const loadDrawingPrompt = useCallback(
+    async (isCancelled?: () => boolean) => {
+      setDrawingPromptLoading(true);
+      setDrawingPromptError("");
+      try {
+        const result = await fetchDrawingPrompt();
+        if (isCancelled?.()) return;
+        setDrawingPrompt(result.prompt ?? "");
+        setDrawingPromptUpdatedAt(result.updatedAt ?? null);
+        setDrawingPromptDirty(false);
+      } catch (error) {
+        if (isCancelled?.()) return;
+        setDrawingPromptError((error as Error).message || "Failed to load prompt");
+      } finally {
+        if (isCancelled?.()) return;
+        setDrawingPromptLoading(false);
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     if (activeEstimateStep === "upload" || draftName) return;
     setDraftName(`Draft ${new Date().toLocaleString()}`);
@@ -737,6 +766,17 @@ function App() {
     if (activePage !== "drafts") return;
     void refreshDrafts();
   }, [activePage, refreshDrafts]);
+
+  useEffect(() => {
+    if (activePage !== "drawing-prompt") return;
+
+    let cancelled = false;
+    void loadDrawingPrompt(() => cancelled);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, loadDrawingPrompt]);
 
   useEffect(() => {
     // When comparisons update from a new run, clear selections.
@@ -906,17 +946,34 @@ function App() {
   const heroTitle =
     activePage === "drafts"
       ? "My Drafts"
-      : activePage === "new-estimate" && activeEstimateStep === "review"
-        ? "Review Extracted Items"
-        : activePage === "new-estimate" && activeEstimateStep === "compare"
-          ? "Select the Items to include in the Estimate"
-          : activePage === "new-estimate" && activeEstimateStep === "finalize"
-            ? "Prepare the items before moving to Pricing"
-            : activePage === "new-estimate" && activeEstimateStep === "pricing"
-              ? "Finalize the Pricing for Items, Electrical, ATG and Installation"
-              : activePage === "new-estimate" && activeEstimateStep === "estimate"
-                ? "Finalize the consolidated estimate"
-                : "Upload Drawings and BOQ to start the Estimation";
+      : activePage === "drawing-prompt"
+        ? "Drawing Extraction Prompt"
+        : activePage === "new-estimate" && activeEstimateStep === "review"
+          ? "Review Extracted Items"
+          : activePage === "new-estimate" && activeEstimateStep === "compare"
+            ? "Select the Items to include in the Estimate"
+            : activePage === "new-estimate" && activeEstimateStep === "finalize"
+              ? "Prepare the items before moving to Pricing"
+              : activePage === "new-estimate" && activeEstimateStep === "pricing"
+                ? "Finalize the Pricing for Items, Electrical, ATG and Installation"
+                : activePage === "new-estimate" && activeEstimateStep === "estimate"
+                  ? "Finalize the consolidated estimate"
+                  : "Upload Drawings and BOQ to start the Estimation";
+
+  const handleDrawingPromptSave = async () => {
+    setDrawingPromptSaving(true);
+    setDrawingPromptError("");
+    try {
+      const result = await updateDrawingPrompt(drawingPrompt);
+      setDrawingPrompt(result.prompt ?? drawingPrompt);
+      setDrawingPromptUpdatedAt(result.updatedAt ?? new Date().toISOString());
+      setDrawingPromptDirty(false);
+    } catch (error) {
+      setDrawingPromptError((error as Error).message || "Failed to save prompt");
+    } finally {
+      setDrawingPromptSaving(false);
+    }
+  };
 
   const handleBoqFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -2198,6 +2255,17 @@ function App() {
             </svg>
             <span>My Drafts</span>
           </button>
+          <button
+            type="button"
+            className={`nav-link ${activePage === "drawing-prompt" ? "is-active" : ""}`}
+            onClick={() => setActivePage("drawing-prompt")}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M4 13.5V16h2.5L15 7.5 12.5 5 4 13.5z" stroke="currentColor" strokeWidth="2" />
+              <path d="M11 4l2.5 2.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <span>Drawing Prompt</span>
+          </button>
         </nav>
         <div className="sidebar__footer" style={{ marginTop: "auto", padding: "1rem 0 0.5rem", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
           <p className="eyebrow" style={{ marginBottom: "0.25rem" }}>Draft</p>
@@ -2429,6 +2497,84 @@ function App() {
               );
             })}
           </div>
+        )}
+
+        {activePage === "drawing-prompt" && (
+          <section id="drawing-prompt" className="panel">
+            <div className="panel__header">
+              <div>
+                <p className="eyebrow">OpenAI</p>
+                <h2>Drawing Extraction Prompt</h2>
+                <p className="eyebrow" style={{ opacity: 0.7, marginTop: "0.35rem" }}>
+                  Used when extracting items from drawings or BOQ images.
+                </p>
+              </div>
+              <div className="upload-actions" style={{ gap: "0.5rem", flexDirection: "column", alignItems: "flex-end" }}>
+                <span className="status" style={{ fontSize: "0.9rem" }}>
+                  {drawingPromptSaving
+                    ? "Saving..."
+                    : drawingPromptDirty
+                      ? "Unsaved changes"
+                      : drawingPromptUpdatedAt
+                        ? `Last updated ${new Date(drawingPromptUpdatedAt).toLocaleString()}`
+                        : "Using default prompt"}
+                </span>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => loadDrawingPrompt()}
+                    disabled={drawingPromptLoading || drawingPromptSaving}
+                  >
+                    Reload
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-match"
+                    onClick={handleDrawingPromptSave}
+                    disabled={drawingPromptLoading || drawingPromptSaving || !drawingPromptDirty}
+                  >
+                    {drawingPromptSaving ? "Saving…" : "Save prompt"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="panel__body">
+              {drawingPromptLoading ? (
+                <div className="loading-container">
+                  <div className="loading-spinner">
+                    <svg width="48" height="48" viewBox="0 0 48 48" className="spinner">
+                      <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="100" strokeDashoffset="25" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                  <p className="loading-text">Loading prompt...</p>
+                </div>
+              ) : (
+                <>
+                  {drawingPromptError && (
+                    <div className="error-text" style={{ color: "#ffb6b6", marginBottom: "0.75rem" }}>
+                      {drawingPromptError}
+                    </div>
+                  )}
+                  <div className="form-group">
+                    <label htmlFor="drawingPrompt">OpenAI prompt</label>
+                    <textarea
+                      id="drawingPrompt"
+                      className="form-input"
+                      style={{ minHeight: "360px", fontFamily: "monospace", lineHeight: "1.4" }}
+                      value={drawingPrompt}
+                      onChange={(event) => {
+                        setDrawingPrompt(event.target.value);
+                        setDrawingPromptDirty(true);
+                      }}
+                      placeholder="Enter the prompt used to extract items from drawings"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
         )}
 
         {activePage === "drafts" && (
