@@ -300,8 +300,9 @@ export async function removeDraft(id: string): Promise<void> {
   await safeFetch(`${API_BASE}/api/drafts/${id}`, { method: "DELETE" });
 }
 
-export async function fetchPriceList(): Promise<{ data: PriceListRow[] }> {
-  return safeFetch(`${API_BASE}/api/estimates/price-list`);
+export async function fetchPriceList(sheet?: string): Promise<{ data: PriceListRow[] }> {
+  const url = sheet ? `${API_BASE}/api/estimates/price-list?sheet=${encodeURIComponent(sheet)}` : `${API_BASE}/api/estimates/price-list`;
+  return safeFetch(url);
 }
 
 export async function fetchAtgTotals(): Promise<AtgTotals> {

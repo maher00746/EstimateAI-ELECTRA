@@ -194,19 +194,26 @@ function structuredItemsToAttributeMap(items: ExtractedItem[]): AttributeMap {
   }, {});
 }
 
+type ExtractAttributesOptions = {
+  promptOverride?: string;
+  systemPromptOverride?: string;
+};
+
 export async function extractAttributesWithOpenAI(
   rawText: string,
-  fileName: string
+  fileName: string,
+  options?: ExtractAttributesOptions
 ): Promise<{ attributes: AttributeMap; items: ExtractedItem[]; totalPrice?: string; rawContent?: string }> {
   const trimmed = rawText.replace(/\s+/g, " ");
-  const prompt = await getDrawingExtractionPrompt();
+  const prompt = options?.promptOverride ?? await getDrawingExtractionPrompt();
+  const systemPrompt = options?.systemPromptOverride ?? DRAWING_SYSTEM_PROMPT;
   const client = getOpenAiClient();
   const response = await client.chat.completions.create({
     model: "gpt-5.2", // drawings extractor should use the latest OpenAI model
     messages: [
       {
         role: "system",
-        content: DRAWING_SYSTEM_PROMPT,
+        content: systemPrompt,
       },
       {
         role: "user",

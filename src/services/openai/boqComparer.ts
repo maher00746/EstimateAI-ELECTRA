@@ -56,13 +56,26 @@ function tryParseJson(content: string): ComparisonResponse {
     }
 }
 
+const BOQ_STRICT_GUARDRAILS = `
+STRICT BOQ EXTRACTION RULES:
+- Use ONLY the information explicitly present in the BOQ file.
+- Do NOT invent, infer, or assume any item, quantity, unit, finish, size, dimensions, or section.
+- If a field is missing, leave it empty.
+- Preserve section_code / item_no if given; do not fabricate section codes.
+- Return the exact same JSON structure as the drawings extraction (array of items with section_code, item_no, description, finishes, dimensions, quantity, unit, etc.).
+- Never add explanatory text outside the JSON.
+`.trim();
+
 export async function extractBoqWithOpenAI(boqPayload: BoqPayload): Promise<{ items: ExtractedItem[]; rawContent: string }> {
     const client = getOpenAiClient();
     const prompt = await getDrawingExtractionPrompt();
+    const strictPrompt = `${prompt}\n\n${BOQ_STRICT_GUARDRAILS}`;
 
     // Reuse the same OpenAI extraction logic/prompt used for drawings
     if (boqPayload.text) {
-        const result = await extractAttributesWithOpenAI(boqPayload.text, boqPayload.fileName ?? "BOQ");
+        const result = await extractAttributesWithOpenAI(boqPayload.text, boqPayload.fileName ?? "BOQ", {
+            promptOverride: strictPrompt,
+        });
         return { items: result.items, rawContent: result.rawContent ?? "" };
     }
 
@@ -74,7 +87,7 @@ export async function extractBoqWithOpenAI(boqPayload: BoqPayload): Promise<{ it
                 content: [
                     {
                         type: "text",
-                        text: `${prompt}\n\nBuild document name: ${boqPayload.fileName ?? "BOQ"}`,
+                        text: `${strictPrompt}\n\nBuild document name: ${boqPayload.fileName ?? "BOQ"}`,
                     },
                     {
                         type: "image_url",
@@ -110,20 +123,20 @@ export async function compareItemListsWithOpenAI(
     const client = getOpenAiClient();
 
     const basePrompt = `
-You are a senior MEP estimation engineer. First extract BOQ items (description, quantity, unit, size/capacity if present), then compare them against the provided drawing items. Return JSON only.
+You are a senior estimation engineer. First extract BOQ items using ONLY the provided BOQ content. Do NOT invent any data. Keep fields empty when not present. Use the same structure/fields as drawing extraction: section_code, item_no, item_number, description, finishes, dimensions, size, quantity, unit (UOM), capacity, full_description.
 
 Statuses:
 - "match_exact": same item with matching quantity and unit.
 - "match_quantity_diff": item matches but quantity differs.
 - "match_unit_diff": item matches but unit differs.
-- "match_size_diff": item matches but size differs.
+- "match_size_diff": item matches but dimentions/size differs.
 - "missing_in_boq": item exists in drawings but not in BOQ.
 - "missing_in_drawing": item exists in BOQ but not in drawings.
 - "no_match": no confident match found.
 
 Rules:
-- Extract BOQ items faithfully from the provided BOQ content.
-- Match on description/size/capacity semantics, tolerant to wording differences.
+- Extract BOQ items faithfully from the provided BOQ content. Do NOT infer missing values.
+- Match on description/finishes/dimensions/size/capacity semantics, tolerant to wording differences.
 - Pair the most relevant items (drawing vs BOQ) even when quantities differ.
 - Add a short note for any status other than match_exact.
 - Output JSON only in this shape:
@@ -136,7 +149,7 @@ Rules:
       "note": "short note"
     }
   ],
-  "parsed_boq": [ { ...boq items you extracted... } ]
+  "parsed_boq": [ { ...boq items you extracted with only the provided info... } ]
 }
 
 Drawing items:
@@ -216,19 +229,27 @@ export async function comparePreExtractedLists(
     const simplifiedDrawing = drawingItems.map((item, idx) => ({
         idx: idx,
         desc: item.description || item.full_description || "",
+        finishes: item.finishes || "",
+        dimensions: item.dimensions || item.size || "",
         qty: item.quantity || "",
         unit: item.unit || "",
         size: item.size || "",
-        capacity: item.capacity || ""
+        capacity: item.capacity || "",
+        section: item.section_code || item.section_name || "",
+        item_no: item.item_no || item.item_number || ""
     }));
 
     const simplifiedBoq = boqItems.map((item, idx) => ({
         idx: idx,
         desc: item.description || item.full_description || "",
+        finishes: item.finishes || "",
+        dimensions: item.dimensions || item.size || "",
         qty: item.quantity || "",
         unit: item.unit || "",
         size: item.size || "",
-        capacity: item.capacity || ""
+        capacity: item.capacity || "",
+        section: item.section_code || item.section_name || "",
+        item_no: item.item_no || item.item_number || ""
     }));
 
     console.log("[compare-lists] Input data lengths:", {
@@ -237,7 +258,7 @@ export async function comparePreExtractedLists(
     });
 
     const prompt = `
-You are a senior MEP estimator. Compare Drawing vs BOQ items and match semantically equivalent items (synonyms, abbreviations, plural/singular). Start from BOQ items and find the best matching drawing item (one-to-one).
+You are a senior estimator. Compare Drawing vs BOQ items and match semantically equivalent items (synonyms, abbreviations, plural/singular). Start from BOQ items and find the best matching drawing item (one-to-one). Do NOT invent any data; only use the provided fields. Keep fields empty if missing.
 
 Matching rules:
 - Treat common synonyms as equivalent:
@@ -246,6 +267,7 @@ Matching rules:
   - Pipe ~ Piping ~ Line ~ Supply Pipe ~ Carbon steel pipe; Hose ~ Flexible Hose.
 - Normalize sizes: consider "1 inch" = 1" = Ø1 = DN25 ≈ 25mm; 2" ≈ 50mm; 3" ≈ 80mm; 4" ≈ 100mm. Prefer matches with same size/capacity; if one side lacks size, match on description/capacity.
 - Normalize units/qty text case-insensitively. If description/size match but qty differs -> match_quantity_diff. If unit differs -> match_unit_diff.
+- Consider finishes, dimensions, section codes, and item numbers when they help disambiguate matches.
 - Only mark missing_in_drawing when no reasonable semantic match exists for a BOQ item. Only mark missing_in_boq when a drawing item has no BOQ counterpart.
 
 Status codes:

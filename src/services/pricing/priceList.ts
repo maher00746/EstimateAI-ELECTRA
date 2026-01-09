@@ -9,7 +9,9 @@ const PRICE_LIST_CACHE_MS = 5 * 60 * 1000; // 5 minutes
 
 type CacheKey = "clean" | "raw";
 
-const priceListCache: Partial<Record<CacheKey, { data: PriceListRow[]; loadedAt: number }>> = {};
+type SheetCacheKey = `${CacheKey}:${string}`;
+
+const priceListCache: Partial<Record<SheetCacheKey, { data: PriceListRow[]; loadedAt: number }>> = {};
 
 interface LoadPriceListOptions {
     /**
@@ -28,9 +30,9 @@ function normaliseHeaders(headers: Array<string | number | null | undefined>, cl
     });
 }
 
-export async function loadPriceList(options: LoadPriceListOptions = {}): Promise<PriceListRow[]> {
+export async function loadPriceList(options: LoadPriceListOptions = {}, sheetName = "Price List"): Promise<PriceListRow[]> {
     const cleanHeaders = options.cleanHeaders !== false;
-    const cacheKey: CacheKey = cleanHeaders ? "clean" : "raw";
+    const cacheKey: SheetCacheKey = `${cleanHeaders ? "clean" : "raw"}:${sheetName}`;
     const now = Date.now();
 
     const cached = priceListCache[cacheKey];
@@ -39,9 +41,9 @@ export async function loadPriceList(options: LoadPriceListOptions = {}): Promise
     }
 
     const workbook = XLSX.readFile(priceSheetPath);
-    const sheet = workbook.Sheets["Price List"];
+    const sheet = workbook.Sheets[sheetName];
     if (!sheet) {
-        throw new Error("Sheet 'Price List' not found in Pricing Sheet.xlsx");
+        throw new Error(`Sheet '${sheetName}' not found in Pricing Sheet.xlsx`);
     }
 
     const rows = XLSX.utils.sheet_to_json<Array<string | number | null | undefined>>(sheet, {

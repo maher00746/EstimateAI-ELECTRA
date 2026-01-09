@@ -847,6 +847,14 @@ body {
   width: 55%;
 }
 
+.finalize-col--number {
+  width: 8%;
+}
+
+.finalize-col--finishes {
+  width: 16%;
+}
+
 .finalize-col--description-narrow {
   width: 32%;
 }

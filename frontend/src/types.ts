@@ -101,6 +101,9 @@ export interface DraftEstimateState {
   pricingMatchOptions?: Record<number, PriceMapping[]>;
   pricingMatchChoice?: Record<number, number>;
   selectedBoqFileName?: string;
+  electricalItems?: Array<{ item: string; price: string; qty: string }>;
+  installationItems?: Array<{ item: string; price: string; qty: string }>;
+  venueItems?: Array<{ item: string; price: string; qty: string }>;
   atgRow?: {
     description: string;
     qty: string;

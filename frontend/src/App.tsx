@@ -1,5 +1,5 @@
-import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import type {
   ExtractedItem,
   BoqComparisonRow,
@@ -9,10 +9,7 @@ import type {
   ItemSource,
   PriceMapping,
   PriceListRow,
-  AtgTotals,
-  ElectricalCalcRequest,
   InstallationInputs,
-  InstallationLocation,
 } from "./types";
 import {
   extractEstimates,
@@ -24,16 +21,14 @@ import {
   getDraft,
   priceMap,
   fetchPriceList,
-  fetchAtgTotals,
-  calculateElectrical,
   fetchDrawingPrompt,
   updateDrawingPrompt,
 } from "./services/api";
 import { useAuth } from "./contexts/AuthContext";
 
 const COMPANY_LOGO_URL = "/company.png";
-const COMPANY_NAME = "Nesma & Partners";
-const CONTACT_NAME = "Abdel Rahman Thalji";
+const COMPANY_NAME = "XYZ";
+const CONTACT_NAME = "-";
 
 const ESTIMATE_STEPS: Array<{ id: EstimateStep; label: string; description: string }> = [
   { id: "upload", label: "Upload", description: "Drawings & BOQ" },
@@ -54,13 +49,13 @@ const STEP_ORDER: Record<EstimateStep, number> = {
 };
 
 type AppPage = "new-estimate" | "drafts" | "drawing-prompt";
-type PricingAccordionId = "items" | "electrical" | "atg" | "installation";
+type PricingAccordionId = "items" | "electrical" | "installation" | "venue";
 
 const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
   { id: "items", label: "Items" },
   { id: "electrical", label: "Electrical" },
-  { id: "atg", label: "ATG" },
   { id: "installation", label: "Installation" },
+  { id: "venue", label: "Venue services" },
 ];
 
 const DRAWING_SECTIONS: Array<{ code: string; title: string; keywords?: string[] }> = [
@@ -73,60 +68,6 @@ const DRAWING_SECTIONS: Array<{ code: string; title: string; keywords?: string[]
 ];
 
 const DRAWING_SECTION_CODE_SET = new Set(DRAWING_SECTIONS.map(section => section.code));
-
-const ELECTRICAL_INPUT_DEFAULTS: Array<{ key: string; label: string; value: number }> = [
-  { key: "a2", label: "Total Tanks", value: 2 },
-  { key: "x", label: "Between Storage Tank and Control Panel", value: 30 },
-  { key: "y", label: "Between Day tank and Control Panel", value: 100 },
-  { key: "z", label: "Between Filling Point and Control Panel", value: 100 },
-  { key: "c5", label: "Single Submersible Pump", value: 1 },
-  { key: "c6", label: "Duplex Gear Pump", value: 0 },
-  { key: "c7", label: "Magnetic Float Switch (Storage Tank)", value: 1 },
-  { key: "c8", label: "Level Probe EDM-40 (Storage Tank)", value: 1 },
-  { key: "c9", label: "Oil Leak Detection Sensor (Storage Tank)", value: 1 },
-  { key: "c10", label: "Flow Meter", value: 0 },
-  { key: "c11", label: "Solenoid Valve Parker #1", value: 1 },
-  { key: "c12", label: "Solenoid Valve Parker #2", value: 0 },
-  { key: "c13", label: "Solenoid Valve Parker #3", value: 0 },
-  { key: "c14", label: "Magnetic Float Switch (Day Tank) #1", value: 1 },
-  { key: "c15", label: "Magnetic Float Switch (Day Tank) #2", value: 0 },
-  { key: "c16", label: "Magnetic Float Switch (Day Tank) #3", value: 0 },
-  { key: "c17", label: "Level Probe EDM-40 (Day Tank) #1", value: 1 },
-  { key: "c18", label: "Level Probe EDM-40 (Day Tank) #2", value: 0 },
-  { key: "c19", label: "Level Probe EDM-40 (Day Tank) #3", value: 0 },
-  { key: "c20", label: "Oil Leak Detection Sensor (Day Tank) #1", value: 1 },
-  { key: "c21", label: "Oil Leak Detection Sensor (Day Tank) #2", value: 0 },
-  { key: "c22", label: "Oil Leak Detection Sensor (Day Tank) #3", value: 0 },
-  { key: "c23", label: "Overfill Alarm Unit (Storage Tank)", value: 1 },
-  { key: "c24", label: "ATG Console", value: 0 },
-  { key: "c25", label: "Remote Annunciator", value: 0 },
-];
-
-const buildDefaultAtgRow = () => ({
-  description: "ATG System",
-  qty: "1",
-  unit: "Lot",
-  unitPrice: "",
-  totalPrice: "",
-  unitManhour: "",
-  totalManhour: "",
-});
-
-const buildDefaultElectricalRow = () => ({
-  description: "Electrical System",
-  qty: "1",
-  unit: "Lot",
-  unitPrice: "",
-  totalPrice: "",
-  unitManhour: "",
-  totalManhour: "",
-});
-
-const buildDefaultElectricalInputs = () =>
-  ELECTRICAL_INPUT_DEFAULTS.reduce<Record<string, string>>((acc, curr) => {
-    acc[curr.key] = curr.value.toString();
-    return acc;
-  }, {});
 
 function renderCell(value: string | undefined) {
   const text = value && value.trim() ? value : "—";
@@ -305,18 +246,24 @@ function EditableItemsTable({
       <table className="matches-table resizable-table finalize-table">
         <thead>
           <tr>
-            <th className="finalize-col finalize-col--description">Description</th>
-            <th className="finalize-col finalize-col--capacity">Capacity</th>
-            <th className="finalize-col finalize-col--size">Size</th>
+            <th className="finalize-col finalize-col--number">No.</th>
+            <th className="finalize-col finalize-col--description finalize-col--description-narrow">Description</th>
+            <th className="finalize-col finalize-col--finishes finalize-col--finishes-wide">Finishes</th>
+            <th className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide">Dimensions</th>
             <th className="finalize-col finalize-col--qty">Quantity</th>
-            <th className="finalize-col finalize-col--unit">Unit</th>
+            <th className="finalize-col finalize-col--unit">UOM</th>
             <th className="finalize-col finalize-col--source">Source</th>
           </tr>
         </thead>
         <tbody>
           {filteredItems.length ? filteredItems.map(({ item, idx }) => (
             <tr key={`finalize-${idx}`} className="matches-table__row">
-              <td className="finalize-col finalize-col--description">
+              <td className="finalize-col finalize-col--number">
+                <span className="cell-text" title={item.item.item_no || item.item.item_number || ""}>
+                  {item.item.item_no || item.item.item_number || "—"}
+                </span>
+              </td>
+              <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.item.description || item.item.full_description || ""}>
                 <textarea
                   className="form-input form-input--table finalize-textarea"
                   value={item.item.description || item.item.full_description || ""}
@@ -325,20 +272,23 @@ function EditableItemsTable({
                   rows={1}
                 />
               </td>
-              <td className="finalize-col finalize-col--capacity">
+              <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.item.finishes || ""}>
                 <input
                   className="form-input form-input--table"
-                  value={item.item.capacity || ""}
-                  onChange={(e) => handleChange(idx, "capacity", e.target.value)}
-                  placeholder="Capacity"
+                  value={item.item.finishes || ""}
+                  onChange={(e) => handleChange(idx, "finishes", e.target.value)}
+                  placeholder="Finishes"
                 />
               </td>
-              <td className="finalize-col finalize-col--size">
+              <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.item.dimensions || item.item.size || ""}>
                 <input
                   className="form-input form-input--table"
-                  value={item.item.size || ""}
-                  onChange={(e) => handleChange(idx, "size", e.target.value)}
-                  placeholder="Size"
+                  value={item.item.dimensions || item.item.size || ""}
+                  onChange={(e) => {
+                    handleChange(idx, "dimensions", e.target.value);
+                    handleChange(idx, "size", e.target.value);
+                  }}
+                  placeholder="Dimensions"
                 />
               </td>
               <td className="finalize-col finalize-col--qty">
@@ -354,7 +304,7 @@ function EditableItemsTable({
                   className="form-input form-input--table"
                   value={item.item.unit || ""}
                   onChange={(e) => handleChange(idx, "unit", e.target.value)}
-                  placeholder="Unit"
+                  placeholder="UOM"
                 />
               </td>
               <td className="finalize-col finalize-col--source">
@@ -445,42 +395,94 @@ function App() {
   const [priceListLoading, setPriceListLoading] = useState(false);
   const [priceListError, setPriceListError] = useState("");
   const [priceListSearch, setPriceListSearch] = useState<Record<number, string>>({});
-  const filteredPricingSelections = useMemo(
-    () => pricingSelections.map((sel, idx) => ({ sel, idx })).filter(({ sel }) => matchesDescription(sel.item, pricingSearch)),
-    [pricingSelections, pricingSearch]
-  );
-  const [atgRow, setAtgRow] = useState<{
-    description: string;
-    qty: string;
-    unit: string;
-    unitPrice: string;
-    totalPrice: string;
-    unitManhour: string;
-    totalManhour: string;
-  }>(() => buildDefaultAtgRow());
-  const [atgLoading, setAtgLoading] = useState(false);
-  const [atgError, setAtgError] = useState<string>("");
-  const [electricalRow, setElectricalRow] = useState<{
-    description: string;
-    qty: string;
-    unit: string;
-    unitPrice: string;
-    totalPrice: string;
-    unitManhour: string;
-    totalManhour: string;
-  }>(() => buildDefaultElectricalRow());
-  const [electricalLoading, setElectricalLoading] = useState(false);
-  const [electricalError, setElectricalError] = useState<string>("");
-  const [electricalModalOpen, setElectricalModalOpen] = useState(false);
-  const [electricalInputs, setElectricalInputs] = useState<Record<string, string>>(buildDefaultElectricalInputs);
   const [installationInputs, setInstallationInputs] = useState<InstallationInputs>({
     workers: "0",
     engineers: "0",
     supervisors: "0",
     location: "riyadh",
   });
-  const [minSellingPrice, setMinSellingPrice] = useState("500000");
-  const [estimateDiscountPct, setEstimateDiscountPct] = useState("0");
+  const mapSheetRows = useCallback((rows: PriceListRow[]): SheetItem[] => {
+    return rows
+      .map((row) => {
+        const item =
+          (row["Item"] as string) ||
+          (row["Description"] as string) ||
+          (row["Name"] as string) ||
+          "";
+        const price =
+          row["Price"] !== undefined
+            ? String(row["Price"])
+            : row["Unit Price"] !== undefined
+              ? String(row["Unit Price"])
+              : "";
+        return { item: item.toString().trim(), price: price.toString().trim(), selected: false };
+      })
+      .filter((r) => r.item);
+  }, []);
+
+  const loadSheetRows = useCallback(
+    async (sheetName: string, setter: React.Dispatch<React.SetStateAction<SheetItem[]>>, openSetter: React.Dispatch<React.SetStateAction<boolean>>) => {
+      setPriceListLoading(true);
+      setPriceListError("");
+      try {
+        const { data } = await fetchPriceList(sheetName);
+        setter(mapSheetRows(data));
+        openSetter(true);
+      } catch (error) {
+        setPriceListError((error as Error).message || "Failed to load sheet data");
+      } finally {
+        setPriceListLoading(false);
+      }
+    },
+    [mapSheetRows]
+  );
+
+  const toggleSheetSelection = (setter: React.Dispatch<React.SetStateAction<SheetItem[]>>, idx: number) => {
+    setter(prev => prev.map((row, i) => (i === idx ? { ...row, selected: !row.selected } : row)));
+  };
+
+  const updateSheetPrice = (setter: React.Dispatch<React.SetStateAction<SheetItem[]>>, idx: number, value: string) => {
+    setter(prev => prev.map((row, i) => (i === idx ? { ...row, price: value } : row)));
+  };
+
+  const addSelectedSheetItems = (
+    sheetRows: SheetItem[],
+    setter: React.Dispatch<React.SetStateAction<SelectedSheetItem[]>>,
+    closeModal: React.Dispatch<React.SetStateAction<boolean>>
+  ) => {
+    const picked = sheetRows.filter(r => r.selected);
+    if (!picked.length) {
+      closeModal(false);
+      return;
+    }
+    setter(prev => [
+      ...prev,
+      ...picked.map(r => ({
+        item: r.item,
+        price: r.price,
+        qty: "1",
+      })),
+    ]);
+    closeModal(false);
+  };
+  const filteredPricingSelections = useMemo(
+    () => pricingSelections.map((sel, idx) => ({ sel, idx })).filter(({ sel }) => matchesDescription(sel.item, pricingSearch)),
+    [pricingSelections, pricingSearch]
+  );
+  const [electricalModalOpen, setElectricalModalOpen] = useState(false);
+  const [installationModalOpen, setInstallationModalOpen] = useState(false);
+  const [venueModalOpen, setVenueModalOpen] = useState(false);
+
+  type SheetItem = { item: string; price: string; selected?: boolean };
+  type SelectedSheetItem = { item: string; price: string; qty: string };
+
+  const [electricalSheetRows, setElectricalSheetRows] = useState<SheetItem[]>([]);
+  const [installationSheetRows, setInstallationSheetRows] = useState<SheetItem[]>([]);
+  const [venueSheetRows, setVenueSheetRows] = useState<SheetItem[]>([]);
+
+  const [electricalItems, setElectricalItems] = useState<SelectedSheetItem[]>([]);
+  const [installationItems, setInstallationItems] = useState<SelectedSheetItem[]>([]);
+  const [venueItems, setVenueItems] = useState<SelectedSheetItem[]>([]);
   const [estimateCompanyName, setEstimateCompanyName] = useState(COMPANY_NAME);
   const [estimateContactName, setEstimateContactName] = useState(CONTACT_NAME);
   const [estimateProjectName, setEstimateProjectName] = useState("");
@@ -696,9 +698,9 @@ function App() {
       pricingMatchOptions,
       pricingMatchChoice,
       selectedBoqFileName,
-      atgRow,
-      electricalRow,
-      electricalInputs,
+      electricalItems,
+      installationItems,
+      venueItems,
       installationInputs,
     };
   }, [
@@ -715,9 +717,9 @@ function App() {
     pricingMatchOptions,
     pricingMatchChoice,
     selectedBoqFileName,
-    atgRow,
-    electricalRow,
-    electricalInputs,
+    electricalItems,
+    installationItems,
+    venueItems,
     installationInputs,
   ]);
 
@@ -860,13 +862,9 @@ function App() {
     setComparisonChecked({});
     setPricingSelections([]);
     setActivePricingSection("items");
-    setAtgRow(buildDefaultAtgRow());
-    setAtgLoading(false);
-    setAtgError("");
-    setElectricalRow(buildDefaultElectricalRow());
-    setElectricalInputs(buildDefaultElectricalInputs());
-    setElectricalLoading(false);
-    setElectricalError("");
+    setElectricalItems([]);
+    setInstallationItems([]);
+    setVenueItems([]);
     setElectricalModalOpen(false);
     setSelectedDrawingRows({});
     setSelectedBoqRows({});
@@ -919,15 +917,6 @@ function App() {
       setPricingMatchOptions(state.pricingMatchOptions || {});
       setPricingMatchChoice(toNumberRecord(state.pricingMatchChoice));
       setSelectedBoqFileName(state.selectedBoqFileName || "");
-      if (state.atgRow) {
-        setAtgRow(state.atgRow);
-      }
-      if (state.electricalRow) {
-        setElectricalRow(state.electricalRow);
-      }
-      if (state.electricalInputs) {
-        setElectricalInputs(state.electricalInputs);
-      }
       if (hydratingDraftRef.current && state.installationInputs) {
         setInstallationInputs(state.installationInputs);
       }
@@ -951,6 +940,9 @@ function App() {
           ? state.selectedBoqRows
           : defaultBoqSelection
       );
+      setElectricalItems(state.electricalItems || []);
+      setInstallationItems(state.installationItems || []);
+      setVenueItems(state.venueItems || []);
       setPendingBoqFile(null);
       setMatchingFiles([]);
       setDraftId(draft.id);
@@ -1437,122 +1429,15 @@ function App() {
       : "—";
   };
 
-  const totalManhour = useMemo(() => {
-    // Total manhour = items (items accordion) + ATG + Electrical
-    const itemsMh = pricingSelections.reduce((sum, entry) => {
-      return sum + parseNumeric(entry.item.total_manhour);
-    }, 0);
-    const atgMh = parseNumeric(atgRow.totalManhour);
-    const electricalMh = parseNumeric(electricalRow.totalManhour);
-    return itemsMh + atgMh + electricalMh;
-  }, [pricingSelections, atgRow.totalManhour, electricalRow.totalManhour]);
-
-  const installationTotals = useMemo(() => {
-    const workers = parseNumeric(installationInputs.workers);
-    const engineers = parseNumeric(installationInputs.engineers);
-    const supervisors = parseNumeric(installationInputs.supervisors);
-    const totalWorkers = workers + engineers + supervisors;
-
-    const monthlyRiyadh = 3800 * workers + 15750 * engineers + 9000 * supervisors + 2000;
-    const monthlyRemote = 5850 * workers + 14600 * engineers + 8600 * supervisors + 4000;
-
-    const weeklyRiyadh = monthlyRiyadh / 4;
-    const weeklyRemote = monthlyRemote / 4;
-
-    const projectPeriod =
-      workers > 0
-        ? (totalManhour / workers / 8 / 6) * 1.2
-        : 0;
-
-    const manpowerRiyadh = weeklyRiyadh * projectPeriod;
-    const manpowerRemote = weeklyRemote * projectPeriod;
-
-    const profitRiyadh = manpowerRiyadh * 0.4;
-    const profitRemote = manpowerRemote * 0.4;
-
-    const riskRiyadh = manpowerRiyadh * 0.15;
-    const riskRemote = manpowerRemote * 0.15;
-
-    const priceRiyadh = manpowerRiyadh + profitRiyadh + riskRiyadh;
-    const priceRemote = manpowerRemote + profitRemote + riskRemote;
-
-    return {
-      workers,
-      engineers,
-      supervisors,
-      totalWorkers,
-      monthlyRiyadh,
-      monthlyRemote,
-      weeklyRiyadh,
-      weeklyRemote,
-      projectPeriod,
-      manpowerRiyadh,
-      manpowerRemote,
-      profitRiyadh,
-      profitRemote,
-      riskRiyadh,
-      riskRemote,
-      priceRiyadh,
-      priceRemote,
-    };
-  }, [installationInputs, totalManhour]);
-  const isRemoteLocation = installationInputs.location === "remote";
-  const installationUnitPriceNumber = isRemoteLocation ? installationTotals.priceRemote : installationTotals.priceRiyadh;
-  const installationFieldStyle: React.CSSProperties = {
-    flex: "1 1 200px",
-    minWidth: "180px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "0.25rem",
-  };
-
-  const pricingTotalsSum = useMemo(() => {
-    // Min Selling Price = sum of all "Total Price" values across pricing sections
-    const itemsTotal = pricingSelections.reduce((sum, entry) => {
-      const totalPrice = entry.item.total_price ?? computeTotalPrice(entry.item.unit_price, entry.item.quantity);
-      return sum + parseNumeric(totalPrice);
-    }, 0);
-
-    const electricalTotal = parseNumeric(
-      electricalRow.totalPrice || computeTotalPrice(electricalRow.unitPrice, electricalRow.qty)
-    );
-
-    const atgTotal = parseNumeric(atgRow.totalPrice || computeTotalPrice(atgRow.unitPrice, atgRow.qty));
-
-    const installationPrice = parseNumeric(
-      isRemoteLocation ? installationTotals.priceRemote : installationTotals.priceRiyadh
-    );
-
-    return itemsTotal + electricalTotal + atgTotal + installationPrice;
-  }, [
-    pricingSelections,
-    electricalRow.totalPrice,
-    electricalRow.unitPrice,
-    electricalRow.qty,
-    atgRow.totalPrice,
-    atgRow.unitPrice,
-    atgRow.qty,
-    isRemoteLocation,
-    installationTotals.priceRemote,
-    installationTotals.priceRiyadh,
-  ]);
-
-  const minSellingPriceNumber = parseNumeric(minSellingPrice);
-  const minSellingPriceColor =
-    minSellingPrice.trim() === ""
-      ? undefined
-      : pricingTotalsSum >= minSellingPriceNumber
-        ? "#1b9e3e"
-        : "#d93025";
-
   const estimateTableRows = useMemo(() => {
     const rows: Array<{
+      categoryCode?: string;
+      category?: string;
       description?: string;
-      capacity?: string;
+      finishes?: string;
       size?: string;
       quantity?: string;
       unit?: string;
-      remarks?: string;
       unitPrice?: string;
       totalPrice?: string;
     }> = [];
@@ -1563,88 +1448,109 @@ function App() {
     };
 
     pricingSelections.forEach((sel) => {
+      const categoryCode = (sel.item.section_code || sel.item.section_name || "").trim().toUpperCase();
       rows.push({
+        categoryCode,
+        category: sel.item.section_name || sel.item.section_code || sel.item.item_type || "Items",
         description: sel.item.description || sel.item.full_description || sel.item.item_type,
-        capacity: normalizeValue(sel.item.capacity),
-        size: normalizeValue(sel.item.size),
+        finishes: normalizeValue(sel.item.finishes),
+        size: normalizeValue(sel.item.dimensions || sel.item.size),
         quantity: normalizeValue(sel.item.quantity),
         unit: normalizeValue(sel.item.unit),
-        remarks: normalizeValue(sel.item.remarks),
         unitPrice: normalizeValue(sel.item.unit_price),
         totalPrice: normalizeValue(sel.item.total_price),
       });
     });
 
-    const electricalAmount = parseNumeric(electricalRow.totalPrice || electricalRow.unitPrice);
-    if (electricalAmount > 0) {
+    electricalItems.forEach((row) => {
       rows.push({
-        description: electricalRow.description,
-        capacity: "",
+        category: "Electrical",
+        categoryCode: "G",
+        description: row.item,
+        finishes: "",
         size: "",
-        quantity: electricalRow.qty,
-        unit: electricalRow.unit,
-        remarks: "",
-        unitPrice: electricalRow.unitPrice,
-        totalPrice: electricalRow.totalPrice,
+        quantity: row.qty,
+        unit: "Unit",
+        unitPrice: row.price,
+        totalPrice: computeTotalPrice(row.price, row.qty),
       });
-    }
+    });
 
-    const atgAmount = parseNumeric(atgRow.totalPrice || atgRow.unitPrice);
-    if (atgAmount > 0) {
+    installationItems.forEach((row) => {
       rows.push({
-        description: atgRow.description,
-        capacity: "",
+        category: "Installation",
+        categoryCode: "H",
+        description: row.item,
+        finishes: "",
         size: "",
-        quantity: atgRow.qty,
-        unit: atgRow.unit,
-        remarks: "",
-        unitPrice: atgRow.unitPrice,
-        totalPrice: atgRow.totalPrice,
+        quantity: row.qty,
+        unit: "Unit",
+        unitPrice: row.price,
+        totalPrice: computeTotalPrice(row.price, row.qty),
       });
-    }
+    });
 
-    const installationUnitPrice = Number.isFinite(installationUnitPriceNumber)
-      ? Number(installationUnitPriceNumber).toFixed(2)
-      : "";
-    const installationTotalPrice = computeTotalPrice(installationUnitPriceNumber, "1");
-    const installationAmount = parseNumeric(installationTotalPrice || installationUnitPrice);
-
-    if (installationAmount > 0) {
+    venueItems.forEach((row) => {
       rows.push({
-        description: "Installation, T&C",
-        capacity: "",
+        category: "Venue services",
+        categoryCode: "I",
+        description: row.item,
+        finishes: "",
         size: "",
-        quantity: "1",
-        unit: "Lot",
-        remarks: "",
-        unitPrice: installationUnitPrice,
-        totalPrice: installationTotalPrice,
+        quantity: row.qty,
+        unit: "Unit",
+        unitPrice: row.price,
+        totalPrice: computeTotalPrice(row.price, row.qty),
       });
-    }
+    });
 
     return rows.filter((row) =>
       Object.values(row).some((value) => (value ?? "").toString().trim().length > 0)
     );
-  }, [pricingSelections, electricalRow, atgRow, installationUnitPriceNumber]);
+  }, [pricingSelections, electricalItems, installationItems, venueItems]);
 
   const estimateTotals = useMemo(() => {
-    const subtotal = estimateTableRows.reduce((sum, row) => {
+    const totalCost = estimateTableRows.reduce((sum, row) => {
       return sum + parseNumeric(row.totalPrice);
     }, 0);
-    const discountPct = Math.max(0, parseNumeric(estimateDiscountPct));
-    const discount = subtotal * (discountPct / 100);
-    const afterDiscount = subtotal - discount;
-    const vat = afterDiscount * 0.15;
-    const totalWithVat = afterDiscount + vat;
     return {
-      subtotal,
-      discountPct,
-      discount,
-      afterDiscount,
-      vat,
-      totalWithVat,
+      totalCost,
     };
-  }, [estimateTableRows, estimateDiscountPct]);
+  }, [estimateTableRows]);
+
+  const groupedEstimateRows = useMemo(
+    () => {
+      const groups: Record<string, { label: string; code?: string; rows: typeof estimateTableRows }> = {};
+      estimateTableRows.forEach(row => {
+        const code = (row.categoryCode || row.category || "").trim().toUpperCase();
+        const section = DRAWING_SECTIONS.find(s => s.code === code);
+        let label = section ? section.title : (row.category || "Other");
+        let resolvedCode = section?.code || (code || undefined);
+        if (!resolvedCode) {
+          if (row.category === "Electrical") resolvedCode = "G";
+          else if (row.category === "Installation") resolvedCode = "H";
+          else if (row.category === "Venue services") resolvedCode = "I";
+        }
+        if (!groups[label]) groups[label] = { label, code: section?.code || code || undefined, rows: [] };
+        groups[label].code = resolvedCode;
+        groups[label].rows.push(row);
+      });
+      return Object.values(groups);
+    },
+    [estimateTableRows]
+  );
+
+  const groupedEstimateRowsWithIds = useMemo(
+    () =>
+      groupedEstimateRows.map(group => ({
+        ...group,
+        rows: group.rows.map((row, idx) => ({
+          ...row,
+          id: group.code ? `${group.code}.${idx + 1}` : `${idx + 1}`,
+        })),
+      })),
+    [groupedEstimateRows]
+  );
 
   const estimateInputStyle: React.CSSProperties = { height: "2.6rem" };
   const estimateInputPaddedStyle: React.CSSProperties = { ...estimateInputStyle, padding: "0.6rem 0.9rem" };
@@ -1679,6 +1585,8 @@ function App() {
   }, []);
 
   const handleGenerateEstimatePdf = useCallback(async () => {
+    if (!groupedEstimateRowsWithIds.length) return;
+
     const quotationDate = new Date();
     const expirationDate = new Date();
     expirationDate.setDate(quotationDate.getDate() + 30);
@@ -1686,45 +1594,40 @@ function App() {
     const formatDate = (date: Date) =>
       date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 
-    const tableRowsHtml = estimateTableRows
-      .map((row, idx) => {
-        return `
-          <tr>
-            <td>${idx + 1}</td>
-            <td>${row.description || "—"}</td>
-            <td>${row.capacity || "—"}</td>
-            <td>${row.size || "—"}</td>
-            <td>${row.quantity || "—"}</td>
-            <td>${row.unit || "—"}</td>
-            <td>${row.remarks || "—"}</td>
-            <td>${row.unitPrice || "—"}</td>
-            <td>${row.totalPrice || "—"}</td>
+    const tableRowsHtml = groupedEstimateRowsWithIds
+      .map((group) => {
+        const groupHeading = `
+          <tr class="group-row">
+            <td colspan="8">${group.label} ${group.code ? `(${group.code})` : ""} — ${group.rows.length} item(s)</td>
           </tr>
         `;
+        const items = group.rows
+          .map((row) => {
+            return `
+              <tr class="item-row">
+                <td>${row.id || ""}</td>
+                <td>${row.description || "—"}</td>
+                <td>${row.finishes || "—"}</td>
+                <td>${row.size || "—"}</td>
+                <td>${row.quantity || "—"}</td>
+                <td>${row.unit || "—"}</td>
+                <td>${row.unitPrice || "—"}</td>
+                <td>${row.totalPrice || "—"}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        return `${groupHeading}${items}`;
       })
       .join("");
 
     const summaryRowsHtml = `
       <tr class="summary-row">
         <td></td>
-        <td class="summary-label">Untaxed Amount</td>
-        <td colspan="5"></td>
+        <td class="summary-label">Total Cost</td>
+        <td colspan="4"></td>
         <td></td>
-        <td class="summary-value"><strong>${formatNumber(estimateTotals.afterDiscount)}</strong></td>
-      </tr>
-      <tr class="summary-row">
-        <td></td>
-        <td class="summary-label">Tax 15%</td>
-        <td colspan="5"></td>
-        <td></td>
-        <td class="summary-value"><strong>${formatNumber(estimateTotals.vat)}</strong></td>
-      </tr>
-      <tr class="summary-row">
-        <td></td>
-        <td class="summary-label">Total</td>
-        <td colspan="5"></td>
-        <td></td>
-        <td class="summary-value"><strong>${formatNumber(estimateTotals.totalWithVat)}</strong></td>
+        <td class="summary-value"><strong>${formatNumber(estimateTotals.totalCost)}</strong></td>
       </tr>
     `;
 
@@ -1754,7 +1657,7 @@ function App() {
               margin-bottom: 8px;
             }
             .logo-banner img {
-              height: 100px;
+              height: 160px;
               object-fit: contain;
               display: block;
             }
@@ -1817,6 +1720,15 @@ function App() {
               padding: 5px;
               vertical-align: top;
             }
+            tbody tr.group-row td {
+              background: #f5f7fb;
+              border-bottom: 1px solid #dce1ea;
+              font-weight: 700;
+              padding: 7px 6px;
+            }
+            tbody tr.item-row td:first-child {
+              font-weight: 600;
+            }
             tfoot td {
               padding: 5px;
             }
@@ -1852,12 +1764,11 @@ function App() {
           </div>
           <div class="header">
             <div class="company-details">
-              <div>${companyNameForPrint}</div>
-              <div>Integrated Engineering Contracting Co.</div>
-            </div>
-            <div class="company-details">
               <div><strong>Company Name:</strong> ${companyNameForPrint}</div>
               <div><strong>Contact Name:</strong> ${contactNameForPrint}</div>
+            </div>
+            <div class="company-details">
+
               <div><strong>Project Name:</strong> ${estimateProjectName || "—"}</div>
               <div><strong>Subject:</strong> ${estimateSubject || "—"}</div>
             </div>
@@ -1876,12 +1787,11 @@ function App() {
               <tr>
                 <th style="width: 36px;">S.N</th>
                 <th style="min-width: 220px;">Description</th>
-                <th style="width: 70px;">Capacity</th>
-                <th style="width: 70px;">Size</th>
-                <th style="width: 55px;">Quantity</th>
-                <th style="width: 50px;">Unit</th>
-                <th style="width: 110px;">Remarks</th>
-                <th style="width: 80px;">Unit Price</th>
+                <th style="min-width: 140px;">Finishes</th>
+                <th style="min-width: 140px;">Dimensions</th>
+                <th style="width: 70px;">Quantity</th>
+                <th style="width: 60px;">Unit</th>
+                <th style="width: 90px;">Unit Price</th>
                 <th style="width: 100px;">Amount</th>
               </tr>
             </thead>
@@ -1957,13 +1867,68 @@ function App() {
       iframe.remove();
     }, 1000);
   }, [
-    estimateTableRows,
-    estimateTotals.subtotal,
-    estimateTotals.totalWithVat,
-    estimateTotals.vat,
+    estimateCompanyName,
+    estimateContactName,
+    estimateTotals.totalCost,
     estimateProjectName,
     estimateSubject,
+    fetchLogoDataUrl,
+    formatNumber,
+    groupedEstimateRowsWithIds,
   ]);
+
+  const handleGenerateEstimateExcel = useCallback(() => {
+    if (!groupedEstimateRowsWithIds.length) return;
+
+    const header = ["Id", "Description", "Finishes", "Dimensions", "Quantity", "Unit", "Unit Price", "Amount"];
+    const rows: Array<Array<string | number>> = [header];
+
+    const toNumber = (value: string | number | undefined) => {
+      if (value === undefined || value === null || value === "") return undefined;
+      const normalised = typeof value === "string" ? value.replace(/,/g, "") : value;
+      const num = Number(normalised);
+      return Number.isFinite(num) ? num : undefined;
+    };
+
+    groupedEstimateRowsWithIds.forEach((group) => {
+      rows.push([`${group.label}${group.code ? ` (${group.code})` : ""} — ${group.rows.length} item(s)`]);
+      group.rows.forEach((row) => {
+        rows.push([
+          row.id || "",
+          row.description || "—",
+          row.finishes || "—",
+          row.size || "—",
+          toNumber(row.quantity) ?? row.quantity ?? "—",
+          row.unit || "—",
+          toNumber(row.unitPrice) ?? row.unitPrice ?? "—",
+          toNumber(row.totalPrice) ?? row.totalPrice ?? "—",
+        ]);
+      });
+    });
+
+    rows.push(["", "Total Cost", "", "", "", "", "", toNumber(estimateTotals.totalCost) ?? estimateTotals.totalCost]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    worksheet["!cols"] = [
+      { wch: 8 },
+      { wch: 40 },
+      { wch: 24 },
+      { wch: 20 },
+      { wch: 12 },
+      { wch: 10 },
+      { wch: 14 },
+      { wch: 16 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Estimate");
+    XLSX.writeFile(workbook, "estimate.xlsx");
+  }, [estimateTotals.totalCost, groupedEstimateRowsWithIds]);
+
+  const handleGenerateEstimateFiles = useCallback(async () => {
+    await handleGenerateEstimatePdf();
+    handleGenerateEstimateExcel();
+  }, [handleGenerateEstimateExcel, handleGenerateEstimatePdf]);
 
   const pickFieldFromRow = (
     row: Record<string, string | number> | undefined,
@@ -2079,108 +2044,6 @@ function App() {
       }
       next[idx] = { ...next[idx], item: updatedItem };
       return next;
-    });
-  };
-
-  const handleInstallationChange = (field: keyof InstallationInputs, value: string) => {
-    setInstallationInputs(prev => ({
-      ...prev,
-      [field]: field === "location" ? (value as InstallationLocation) : value,
-    }));
-  };
-
-  const normaliseNumericValue = (value: number | string | undefined) => {
-    if (value === undefined || value === null) return "";
-    return typeof value === "number" ? value.toString() : String(value);
-  };
-
-  const handleFetchAtgData = async () => {
-    setAtgLoading(true);
-    setAtgError("");
-    try {
-      const data: AtgTotals = await fetchAtgTotals();
-      const unitPrice = roundPrice(normaliseNumericValue(data.totalSellingPrice));
-      const unitManhour = normaliseNumericValue(data.totalManhour);
-      setAtgRow(prev => {
-        const qty = prev.qty || "1";
-        return {
-          description: "ATG System",
-          unit: "Lot",
-          qty,
-          unitPrice,
-          totalPrice: computeTotalPrice(unitPrice, qty),
-          unitManhour,
-          totalManhour: computeTotalValue(unitManhour, qty),
-        };
-      });
-    } catch (error) {
-      console.error("Failed to load ATG data", error);
-      setAtgError((error as Error).message || "Failed to load ATG data.");
-    } finally {
-      setAtgLoading(false);
-    }
-  };
-
-  const handleAtgQtyChange = (value: string) => {
-    setAtgRow(prev => {
-      const qty = value;
-      return {
-        ...prev,
-        qty,
-        totalPrice: computeTotalPrice(prev.unitPrice, qty),
-        totalManhour: computeTotalValue(prev.unitManhour, qty),
-      };
-    });
-  };
-
-  const handleFetchElectricalData = async () => {
-    setElectricalLoading(true);
-    setElectricalError("");
-    try {
-      const payload: ElectricalCalcRequest = {
-        a2: Number(electricalInputs["a2"] ?? 0) || 0,
-        x: Number(electricalInputs["x"] ?? 0) || 0,
-        y: Number(electricalInputs["y"] ?? 0) || 0,
-        z: Number(electricalInputs["z"] ?? 0) || 0,
-        cValues: Array.from({ length: 21 }).map((_, idx) => {
-          const key = `c${5 + idx}`;
-          const val = Number(electricalInputs[key] ?? 0);
-          return Number.isFinite(val) ? val : 0;
-        }),
-      };
-      const data = await calculateElectrical(payload);
-      const unitPrice = roundPrice(normaliseNumericValue(data.totalPrice));
-      const unitManhour = normaliseNumericValue(data.totalManhours);
-      setElectricalRow(prev => {
-        const qty = prev.qty || "1";
-        return {
-          description: "Electrical System",
-          unit: "Lot",
-          qty,
-          unitPrice,
-          totalPrice: computeTotalPrice(unitPrice, qty),
-          unitManhour,
-          totalManhour: computeTotalValue(unitManhour, qty),
-        };
-      });
-      setElectricalModalOpen(false);
-    } catch (error) {
-      console.error("Failed to load Electrical data", error);
-      setElectricalError((error as Error).message || "Failed to load Electrical data.");
-    } finally {
-      setElectricalLoading(false);
-    }
-  };
-
-  const handleElectricalQtyChange = (value: string) => {
-    setElectricalRow(prev => {
-      const qty = value;
-      return {
-        ...prev,
-        qty,
-        totalPrice: computeTotalPrice(prev.unitPrice, qty),
-        totalManhour: computeTotalValue(prev.unitManhour, qty),
-      };
     });
   };
 
@@ -2379,59 +2242,6 @@ function App() {
                     <span className="progress-text">Step {Math.min(loadingStage + 1, loadingMessages.length)} of {loadingMessages.length}</span>
                   </div>
                 )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {electricalModalOpen && (
-          <div className="modal-backdrop">
-            <div className="modal" style={{ maxWidth: "900px", width: "90vw" }}>
-              <div className="modal__header">
-                <h3 className="modal__title">Electrical Variables</h3>
-                <button
-                  type="button"
-                  className="modal__close"
-                  aria-label="Close"
-                  onClick={() => setElectricalModalOpen(false)}
-                  disabled={electricalLoading}
-                >
-                  ×
-                </button>
-              </div>
-              <div className="modal__body">
-                <div className="electrical-inputs-grid">
-                  {ELECTRICAL_INPUT_DEFAULTS.map((item) => (
-                    <label key={item.key} className="electrical-input">
-                      <span className="electrical-input__label">{item.label}</span>
-                      <input
-                        className="form-input electrical-input__control"
-                        type="number"
-                        step="1"
-                        value={electricalInputs[item.key] ?? ""}
-                        onChange={(e) =>
-                          setElectricalInputs(prev => ({
-                            ...prev,
-                            [item.key]: e.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                  ))}
-                </div>
-                {electricalError && (
-                  <div className="modal__error">{electricalError}</div>
-                )}
-              </div>
-              <div className="modal__footer">
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleFetchElectricalData}
-                  disabled={electricalLoading}
-                >
-                  {electricalLoading ? "Calculating…" : "Calculate"}
-                </button>
               </div>
             </div>
           </div>
@@ -2907,11 +2717,12 @@ function App() {
                       <thead>
                         <tr>
                           <th className="checkbox-col"></th>
-                          <th className="boq-col-description">Description</th>
-                          <th className="boq-col-capacity">Capacity</th>
-                          <th className="boq-col-size">Size</th>
-                          <th className="boq-col-qty">Quantity</th>
-                          <th className="boq-col-unit">Unit</th>
+                          <th className="col--description">No.</th>
+                          <th className="col--description">Description</th>
+                          <th className="col--finishes">Finishes</th>
+                          <th className="col--dimensions">Dimensions</th>
+                          <th className="col--qty">Quantity</th>
+                          <th className="col--uom">UOM</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2923,6 +2734,7 @@ function App() {
                               if (target.closest("input, textarea, button, select")) return;
                               setSelectedBoqRows(prev => ({ ...prev, [key]: !prev[key] }));
                             };
+                            const displayNumber = item.item_no || item.item_number || "—";
                             return (
                               <tr
                                 key={key}
@@ -2940,7 +2752,10 @@ function App() {
                                     }}
                                   />
                                 </td>
-                                <td className="boq-col-description">
+                                <td className="finalize-col finalize-col--number">
+                                  <span className="cell-text" title={displayNumber}>{displayNumber}</span>
+                                </td>
+                                <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.description || item.full_description || ""}>
                                   <textarea
                                     className="form-input form-input--table finalize-textarea"
                                     value={item.description || item.full_description || ""}
@@ -2952,29 +2767,30 @@ function App() {
                                     rows={1}
                                   />
                                 </td>
-                                <td className="boq-col-capacity">
+                                <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.finishes || ""}>
                                   <input
                                     className="form-input form-input--table"
-                                    value={item.capacity || ""}
+                                    value={item.finishes || ""}
                                     onChange={(e) => {
                                       e.stopPropagation();
-                                      updateBoqItemField(itemIdx, "capacity", e.target.value);
+                                      updateBoqItemField(itemIdx, "finishes", e.target.value);
                                     }}
-                                    placeholder="Capacity"
+                                    placeholder="Finishes"
                                   />
                                 </td>
-                                <td className="boq-col-size">
+                                <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.dimensions || item.size || ""}>
                                   <input
                                     className="form-input form-input--table"
-                                    value={item.size || ""}
+                                    value={item.dimensions || item.size || ""}
                                     onChange={(e) => {
                                       e.stopPropagation();
+                                      updateBoqItemField(itemIdx, "dimensions", e.target.value);
                                       updateBoqItemField(itemIdx, "size", e.target.value);
                                     }}
-                                    placeholder="Size"
+                                    placeholder="Dimensions"
                                   />
                                 </td>
-                                <td>
+                                <td className="finalize-col finalize-col--qty">
                                   <input
                                     className="form-input form-input--table"
                                     value={item.quantity || ""}
@@ -2985,7 +2801,7 @@ function App() {
                                     placeholder="Qty"
                                   />
                                 </td>
-                                <td className="boq-col-unit">
+                                <td className="finalize-col finalize-col--unit">
                                   <input
                                     className="form-input form-input--table"
                                     value={item.unit || ""}
@@ -2993,7 +2809,7 @@ function App() {
                                       e.stopPropagation();
                                       updateBoqItemField(itemIdx, "unit", e.target.value);
                                     }}
-                                    placeholder="Unit"
+                                    placeholder="UOM"
                                   />
                                 </td>
                               </tr>
@@ -3166,24 +2982,6 @@ function App() {
               <div>
                 <p className="eyebrow">Pricing</p>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <label htmlFor="minSellingPrice" style={{ fontWeight: 600 }}>
-                  Min Selling Price
-                </label>
-                <input
-                  id="minSellingPrice"
-                  type="number"
-                  className="form-input"
-                  value={minSellingPrice}
-                  onChange={(e) => setMinSellingPrice(e.target.value)}
-                  style={{
-                    width: "10rem",
-                    height: "2.4rem",
-                    color: minSellingPriceColor,
-                    fontWeight: 700,
-                  }}
-                />
-              </div>
             </div>
             <div className="pricing-accordion">
               {PRICING_SECTIONS.map(section => {
@@ -3223,15 +3021,12 @@ function App() {
                                       <ResizableTh resize={pricingResize} index={0}>Id</ResizableTh>
                                       <ResizableTh resize={pricingResize} index={1}>Item</ResizableTh>
                                       <ResizableTh resize={pricingResize} index={2}>Description</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={3}>Capacity</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={4}>Size</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={5}>QTY</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={3}>Finishes</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={4}>Dimensions</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={5}>Qty</ResizableTh>
                                       <ResizableTh resize={pricingResize} index={6}>Unit</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={7}>Remarks</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={8}>Unit Price</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={9}>Total Price</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={10}>Unit Manhour</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={11}>Total Manhour</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={7}>Unit Price</ResizableTh>
+                                      <ResizableTh resize={pricingResize} index={8}>Total Price</ResizableTh>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -3392,8 +3187,8 @@ function App() {
                                                 </>
                                               </div>
                                             </td>
-                                            <td>{renderCell(sel.item.capacity)}</td>
-                                            <td>{renderCell(sel.item.size)}</td>
+                                            <td>{renderCell(sel.item.finishes)}</td>
+                                            <td>{renderCell(sel.item.dimensions || sel.item.size)}</td>
                                             <td>
                                               <input
                                                 className="form-input form-input--table"
@@ -3407,24 +3202,15 @@ function App() {
                                             </td>
                                             <td>{renderCell(sel.item.unit)}</td>
                                             <td>
-                                              {renderCell(sel.item.remarks)}
-                                            </td>
-                                            <td>
                                               {renderCell(sel.item.unit_price)}
                                             </td>
                                             <td>{renderCell(sel.item.total_price)}</td>
-                                            <td>
-                                              {renderCell(sel.item.unit_manhour)}
-                                            </td>
-                                            <td>
-                                              {renderCell(sel.item.total_manhour)}
-                                            </td>
                                           </tr>
                                         );
                                       })
                                     ) : (
                                       <tr>
-                                        <td colSpan={12} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                                        <td colSpan={9} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
                                           No items match this description search.
                                         </td>
                                       </tr>
@@ -3440,261 +3226,172 @@ function App() {
                               <button
                                 type="button"
                                 className="btn-secondary"
-                                onClick={() => setElectricalModalOpen(true)}
+                                onClick={() => loadSheetRows("Electrical", setElectricalSheetRows, setElectricalModalOpen)}
+                                disabled={priceListLoading}
                               >
-                                Calculate Electrical
+                                Add Items
                               </button>
+                              {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
                             </div>
                             <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
                               <table className="matches-table resizable-table pricing-table">
                                 <thead>
                                   <tr>
-                                    <ResizableTh resize={pricingResize} index={0}>Item Description</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Qty</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Unit</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={3}>Unit Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={4}>Total Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={5}>Unit Manhour</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={6}>Total Manhour</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  <tr className="matches-table__row">
-                                    <td>
-                                      {renderCell(electricalRow.description)}
-                                    </td>
-                                    <td>
-                                      <input
-                                        className="form-input form-input--table"
-                                        type="number"
-                                        min="0"
-                                        step="1"
-                                        value={electricalRow.qty}
-                                        onChange={(e) => handleElectricalQtyChange(e.target.value)}
-                                      />
-                                    </td>
-                                    <td>
-                                      {renderCell(electricalRow.unit)}
-                                    </td>
-                                    <td>
-                                      {renderCell(electricalRow.unitPrice)}
-                                    </td>
-                                    <td>{renderCell(electricalRow.totalPrice)}</td>
-                                    <td>
-                                      {renderCell(electricalRow.unitManhour)}
-                                    </td>
-                                    <td>{renderCell(electricalRow.totalManhour)}</td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ) : section.id === "atg" ? (
-                          <div className="pricing-atg">
-                            <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem" }}>
-                              <button
-                                type="button"
-                                className="btn-secondary"
-                                onClick={handleFetchAtgData}
-                                disabled={atgLoading}
-                              >
-                                {atgLoading ? "Loading…" : "Get the ATG Data"}
-                              </button>
-                              {atgError && (
-                                <span style={{ color: "#c0392b", fontSize: "0.95rem" }}>{atgError}</span>
-                              )}
-                            </div>
-                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
-                              <table className="matches-table resizable-table pricing-table">
-                                <thead>
-                                  <tr>
-                                    <ResizableTh resize={pricingResize} index={0}>Item Description</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Qty</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Unit</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={3}>Unit Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={4}>Total Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={5}>Unit Manhour</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={6}>Total Manhour</ResizableTh>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  <tr className="matches-table__row">
-                                    <td>
-                                      {renderCell(atgRow.description)}
-                                    </td>
-                                    <td>
-                                      <input
-                                        className="form-input form-input--table"
-                                        type="number"
-                                        min="0"
-                                        step="1"
-                                        value={atgRow.qty}
-                                        onChange={(e) => handleAtgQtyChange(e.target.value)}
-                                      />
-                                    </td>
-                                    <td>
-                                      {renderCell(atgRow.unit)}
-                                    </td>
-                                    <td>
-                                      <input
-                                        className="form-input form-input--table"
-                                        value={atgRow.unitPrice}
-                                        onChange={(e) =>
-                                          setAtgRow(prev => {
-                                            const unitPrice = roundPrice(e.target.value);
-                                            const qty = prev.qty || "0";
-                                            return {
-                                              ...prev,
-                                              unitPrice,
-                                              totalPrice: computeTotalPrice(unitPrice, qty),
-                                            };
-                                          })
-                                        }
-                                        placeholder="Unit price"
-                                      />
-                                    </td>
-                                    <td>{renderCell(atgRow.totalPrice)}</td>
-                                    <td>
-                                      {renderCell(atgRow.unitManhour)}
-                                    </td>
-                                    <td>{renderCell(atgRow.totalManhour)}</td>
-                                  </tr>
+                                  {electricalItems.length ? electricalItems.map((row, idx) => (
+                                    <tr key={`electrical-${idx}`} className="matches-table__row">
+                                      <td>{renderCell(row.item)}</td>
+                                      <td>{renderCell("")}</td>
+                                      <td>{renderCell("")}</td>
+                                      <td>
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={row.price}
+                                          onChange={(e) => setElectricalItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                                        />
+                                      </td>
+                                      <td>
+                                        <input
+                                          className="form-input form-input--table"
+                                          type="number"
+                                          min="1"
+                                          step="1"
+                                          value={row.qty}
+                                          onChange={(e) => setElectricalItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                                        />
+                                      </td>
+                                      <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
+                                    </tr>
+                                  )) : (
+                                    <tr>
+                                      <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No electrical items added.</td>
+                                    </tr>
+                                  )}
                                 </tbody>
                               </table>
                             </div>
                           </div>
                         ) : section.id === "installation" ? (
                           <div className="pricing-installation">
-                            <div
-                              className="form-grid"
-                              style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                gap: "0.75rem",
-                                alignItems: "flex-start",
-                              }}
-                            >
-                              <label className="form-field" style={installationFieldStyle}>
-                                <span className="form-label">Number of Workers</span>
-                                <input
-                                  className="form-input"
-                                  type="number"
-                                  min="0"
-                                  step="1"
-                                  value={installationInputs.workers}
-                                  onChange={(e) => handleInstallationChange("workers", e.target.value)}
-                                />
-                              </label>
-                              <label className="form-field" style={installationFieldStyle}>
-                                <span className="form-label">Number of Engineers</span>
-                                <input
-                                  className="form-input"
-                                  type="number"
-                                  min="0"
-                                  step="1"
-                                  value={installationInputs.engineers}
-                                  onChange={(e) => handleInstallationChange("engineers", e.target.value)}
-                                />
-                              </label>
-                              <label className="form-field" style={installationFieldStyle}>
-                                <span className="form-label">Number of Supervisors</span>
-                                <input
-                                  className="form-input"
-                                  type="number"
-                                  min="0"
-                                  step="1"
-                                  value={installationInputs.supervisors}
-                                  onChange={(e) => handleInstallationChange("supervisors", e.target.value)}
-                                />
-                              </label>
-                              <label className="form-field" style={installationFieldStyle}>
-                                <span className="form-label">Location</span>
-                                <select
-                                  className="form-input"
-                                  value={installationInputs.location}
-                                  onChange={(e) => handleInstallationChange("location", e.target.value)}
-                                >
-                                  <option value="riyadh">Riyadh</option>
-                                  <option value="remote">Remote Area</option>
-                                </select>
-                              </label>
+                            <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => loadSheetRows("Installation", setInstallationSheetRows, setInstallationModalOpen)}
+                                disabled={priceListLoading}
+                              >
+                                Add Items
+                              </button>
+                              {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
                             </div>
-
-                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.75rem" }}>
+                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
                               <table className="matches-table resizable-table pricing-table">
                                 <thead>
                                   <tr>
-                                    <ResizableTh resize={pricingResize} index={0}>Metric</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Value</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  <tr className="matches-table__row">
-                                    <td>Total number of workers</td>
-                                    <td>{formatNumber(installationTotals.totalWorkers)}</td>
+                                  {installationItems.length ? installationItems.map((row, idx) => (
+                                    <tr key={`installation-${idx}`} className="matches-table__row">
+                                      <td>{renderCell(row.item)}</td>
+                                      <td>{renderCell("")}</td>
+                                      <td>{renderCell("")}</td>
+                                      <td>
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={row.price}
+                                          onChange={(e) => setInstallationItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                                        />
+                                      </td>
+                                      <td>
+                                        <input
+                                          className="form-input form-input--table"
+                                          type="number"
+                                          min="1"
+                                          step="1"
+                                          value={row.qty}
+                                          onChange={(e) => setInstallationItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                                        />
+                                      </td>
+                                      <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
+                                    </tr>
+                                  )) : (
+                                    <tr>
+                                      <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No installation items added.</td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : section.id === "venue" ? (
+                          <div className="pricing-venue">
+                            <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => loadSheetRows("Venue services", setVenueSheetRows, setVenueModalOpen)}
+                                disabled={priceListLoading}
+                              >
+                                Add Items
+                              </button>
+                              {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
+                            </div>
+                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                              <table className="matches-table resizable-table pricing-table">
+                                <thead>
+                                  <tr>
+                                    <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
+                                    <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
                                   </tr>
-                                  <tr className="matches-table__row">
-                                    <td>Total manhour</td>
-                                    <td>{formatNumber(totalManhour)}</td>
-                                  </tr>
-                                  <tr className="matches-table__row">
-                                    <td>Project period</td>
-                                    <td>{formatNumber(installationTotals.projectPeriod)}</td>
-                                  </tr>
-                                  {isRemoteLocation ? (
-                                    <>
-                                      <tr className="matches-table__row">
-                                        <td>Monthly</td>
-                                        <td>{formatNumber(installationTotals.monthlyRemote)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Weekly</td>
-                                        <td>{formatNumber(installationTotals.weeklyRemote)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Manpower cost</td>
-                                        <td>{formatNumber(installationTotals.manpowerRemote)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Installation profit</td>
-                                        <td>{formatNumber(installationTotals.profitRemote)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Risk</td>
-                                        <td>{formatNumber(installationTotals.riskRemote)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Price</td>
-                                        <td>{formatNumber(installationTotals.priceRemote)}</td>
-                                      </tr>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <tr className="matches-table__row">
-                                        <td>Monthly</td>
-                                        <td>{formatNumber(installationTotals.monthlyRiyadh)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Weekly</td>
-                                        <td>{formatNumber(installationTotals.weeklyRiyadh)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Manpower cost</td>
-                                        <td>{formatNumber(installationTotals.manpowerRiyadh)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Installation profit</td>
-                                        <td>{formatNumber(installationTotals.profitRiyadh)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Risk</td>
-                                        <td>{formatNumber(installationTotals.riskRiyadh)}</td>
-                                      </tr>
-                                      <tr className="matches-table__row">
-                                        <td>Price</td>
-                                        <td>{formatNumber(installationTotals.priceRiyadh)}</td>
-                                      </tr>
-                                    </>
+                                </thead>
+                                <tbody>
+                                  {venueItems.length ? venueItems.map((row, idx) => (
+                                    <tr key={`venue-${idx}`} className="matches-table__row">
+                                      <td>{renderCell(row.item)}</td>
+                                      <td>{renderCell("")}</td>
+                                      <td>{renderCell("")}</td>
+                                      <td>
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={row.price}
+                                          onChange={(e) => setVenueItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                                        />
+                                      </td>
+                                      <td>
+                                        <input
+                                          className="form-input form-input--table"
+                                          type="number"
+                                          min="1"
+                                          step="1"
+                                          value={row.qty}
+                                          onChange={(e) => setVenueItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                                        />
+                                      </td>
+                                      <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
+                                    </tr>
+                                  )) : (
+                                    <tr>
+                                      <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No venue services items added.</td>
+                                    </tr>
                                   )}
                                 </tbody>
                               </table>
@@ -3794,82 +3491,44 @@ function App() {
                     <tr>
                       <ResizableTh resize={estimateResize} index={0}>Id</ResizableTh>
                       <ResizableTh resize={estimateResize} index={1}>Description</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={2}>Capacity</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={3}>Size</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={2}>Finishes</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={3}>Dimensions</ResizableTh>
                       <ResizableTh resize={estimateResize} index={4}>Quantity</ResizableTh>
                       <ResizableTh resize={estimateResize} index={5}>Unit</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={6}>Remarks</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={7}>Unit Price</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={8}>Amount</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={6}>Unit Price</ResizableTh>
+                      <ResizableTh resize={estimateResize} index={7}>Amount</ResizableTh>
                     </tr>
                   </thead>
                   <tbody>
-                    {estimateTableRows.map((row, idx) => (
-                      <tr key={`estimate-${idx}`} className="matches-table__row">
-                        <td>{idx + 1}</td>
-                        <td>{renderCell(row.description)}</td>
-                        <td>{renderCell(row.capacity)}</td>
-                        <td>{renderCell(row.size)}</td>
-                        <td>{renderCell(row.quantity)}</td>
-                        <td>{renderCell(row.unit)}</td>
-                        <td>{renderCell(row.remarks)}</td>
-                        <td>{renderCell(row.unitPrice)}</td>
-                        <td>{renderCell(row.totalPrice)}</td>
-                      </tr>
+                    {groupedEstimateRows.map(group => (
+                      <React.Fragment key={group.label}>
+                        <tr className="matches-table__section-row">
+                          <td colSpan={8} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
+                            {group.label} {group.code ? `(${group.code})` : ""} — {group.rows.length} item(s)
+                          </td>
+                        </tr>
+                        {group.rows.map((row, idx) => (
+                          <tr key={`estimate-${group.label}-${idx}`} className="matches-table__row">
+                            <td>{group.code ? `${group.code}.${idx + 1}` : `${idx + 1}`}</td>
+                            <td>{renderCell(row.description)}</td>
+                            <td>{renderCell(row.finishes)}</td>
+                            <td>{renderCell(row.size)}</td>
+                            <td>{renderCell(row.quantity)}</td>
+                            <td>{renderCell(row.unit)}</td>
+                            <td>{renderCell(row.unitPrice)}</td>
+                            <td>{renderCell(row.totalPrice)}</td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="matches-table__row estimate-summary-row">
                       <td />
-                      <td className="estimate-summary-label">Total Excluding VAT</td>
-                      <td colSpan={5} />
-                      <td />
-                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.subtotal)}</strong></td>
-                    </tr>
-                    <tr className="matches-table__row estimate-summary-row">
-                      <td />
-                      <td className="estimate-summary-label">Special Discount</td>
+                      <td className="estimate-summary-label">Total Cost</td>
                       <td colSpan={4} />
                       <td />
-                      <td>
-                        <div className="estimate-discount-input" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
-                          <input
-                            className="form-input form-input--table"
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.1"
-                            value={estimateDiscountPct}
-                            onChange={(e) => setEstimateDiscountPct(e.target.value)}
-                            style={{ width: "5rem" }}
-                          />
-                          <span style={{ fontWeight: 600 }}>%</span>
-                        </div>
-                      </td>
-                      <td className="estimate-summary-value">
-                        <strong>{estimateTotals.discount > 0 ? `-${formatNumber(estimateTotals.discount)}` : formatNumber(0)}</strong>
-                      </td>
-                    </tr>
-                    <tr className="matches-table__row estimate-summary-row">
-                      <td />
-                      <td className="estimate-summary-label">Total After Discount Excluding VAT</td>
-                      <td colSpan={5} />
-                      <td />
-                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.afterDiscount)}</strong></td>
-                    </tr>
-                    <tr className="matches-table__row estimate-summary-row">
-                      <td />
-                      <td className="estimate-summary-label">VAT (15%)</td>
-                      <td colSpan={5} />
-                      <td />
-                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.vat)}</strong></td>
-                    </tr>
-                    <tr className="matches-table__row estimate-summary-row">
-                      <td />
-                      <td className="estimate-summary-label">Total Including VAT</td>
-                      <td colSpan={5} />
-                      <td />
-                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.totalWithVat)}</strong></td>
+                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.totalCost)}</strong></td>
                     </tr>
                   </tfoot>
                 </table>
@@ -3878,7 +3537,7 @@ function App() {
               <p className="empty-state">No estimate data to show yet.</p>
             )}
             <div className="table-actions" style={{ marginTop: "0.75rem", justifyContent: "flex-end" }}>
-              <button type="button" className="btn-match" onClick={() => void handleGenerateEstimatePdf()}>
+              <button type="button" className="btn-match" onClick={() => void handleGenerateEstimateFiles()}>
                 Generate
               </button>
             </div>
@@ -3961,6 +3620,138 @@ function App() {
             </form>
 
           </section>
+        )}
+
+        {electricalModalOpen && (
+          <div className="modal-backdrop">
+            <div className="modal" style={{ maxWidth: "620px" }}>
+              <h3>Add Electrical Items</h3>
+              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
+                <table className="matches-table resizable-table pricing-table">
+                  <thead>
+                    <tr>
+                      <th className="checkbox-col"></th>
+                      <th>Item</th>
+                      <th>Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {electricalSheetRows.length ? electricalSheetRows.map((row, idx) => (
+                      <tr key={`electrical-modal-${idx}`} className="matches-table__row">
+                        <td className="checkbox-col">
+                          <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setElectricalSheetRows, idx)} />
+                        </td>
+                        <td>{renderCell(row.item)}</td>
+                        <td>
+                          <input
+                            className="form-input form-input--table"
+                            value={row.price}
+                            onChange={(e) => updateSheetPrice(setElectricalSheetRows, idx, e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="modal__actions">
+                <button type="button" className="btn-secondary" onClick={() => setElectricalModalOpen(false)}>Cancel</button>
+                <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(electricalSheetRows, setElectricalItems, setElectricalModalOpen)}>Add</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {installationModalOpen && (
+          <div className="modal-backdrop">
+            <div className="modal" style={{ maxWidth: "620px" }}>
+              <h3>Add Installation Items</h3>
+              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
+                <table className="matches-table resizable-table pricing-table">
+                  <thead>
+                    <tr>
+                      <th className="checkbox-col"></th>
+                      <th>Item</th>
+                      <th>Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {installationSheetRows.length ? installationSheetRows.map((row, idx) => (
+                      <tr key={`installation-modal-${idx}`} className="matches-table__row">
+                        <td className="checkbox-col">
+                          <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setInstallationSheetRows, idx)} />
+                        </td>
+                        <td>{renderCell(row.item)}</td>
+                        <td>
+                          <input
+                            className="form-input form-input--table"
+                            value={row.price}
+                            onChange={(e) => updateSheetPrice(setInstallationSheetRows, idx, e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="modal__actions">
+                <button type="button" className="btn-secondary" onClick={() => setInstallationModalOpen(false)}>Cancel</button>
+                <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(installationSheetRows, setInstallationItems, setInstallationModalOpen)}>Add</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {venueModalOpen && (
+          <div className="modal-backdrop">
+            <div className="modal" style={{ maxWidth: "620px" }}>
+              <h3>Add Venue Services Items</h3>
+              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
+                <table className="matches-table resizable-table pricing-table">
+                  <thead>
+                    <tr>
+                      <th className="checkbox-col"></th>
+                      <th>Item</th>
+                      <th>Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {venueSheetRows.length ? venueSheetRows.map((row, idx) => (
+                      <tr key={`venue-modal-${idx}`} className="matches-table__row">
+                        <td className="checkbox-col">
+                          <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setVenueSheetRows, idx)} />
+                        </td>
+                        <td>{renderCell(row.item)}</td>
+                        <td>
+                          <input
+                            className="form-input form-input--table"
+                            value={row.price}
+                            onChange={(e) => updateSheetPrice(setVenueSheetRows, idx, e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="modal__actions">
+                <button type="button" className="btn-secondary" onClick={() => setVenueModalOpen(false)}>Cancel</button>
+                <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(venueSheetRows, setVenueItems, setVenueModalOpen)}>Add</button>
+              </div>
+            </div>
+          </div>
         )}
 
         {showDrawingsOnlyConfirm && (

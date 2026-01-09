@@ -275,9 +275,10 @@ router.get("/stats", async (req, res, next) => {
   }
 });
 
-router.get("/price-list", async (_req, res, next) => {
+router.get("/price-list", async (req, res, next) => {
   try {
-    const data = await loadPriceList();
+    const sheet = (req.query.sheet as string | undefined) || "Price List";
+    const data = await loadPriceList({}, sheet);
     res.status(200).json({ data });
   } catch (error) {
     next(error);

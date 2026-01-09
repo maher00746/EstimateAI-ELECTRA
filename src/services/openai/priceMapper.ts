@@ -137,15 +137,19 @@ function categorizeItem(item: ExtractedItem): string {
 function buildPrompt(items: ExtractedItem[], priceList: PriceListRow[]): string {
     // Build simplified items with category and normalized fields
     const itemsForModel = items.map((item, idx) => {
-        const normalizedSize = normalizeSize(item.size);
+        const normalizedSize = normalizeSize(item.size || item.dimensions);
         const category = categorizeItem(item);
         return {
             idx,
             category,
             description: (item.description ?? item.full_description ?? "").trim(),
+            finishes: item.finishes || "",
+            dimensions: item.dimensions || item.size || "",
             size: normalizedSize || item.size || "",
             capacity: item.capacity || "",
             quantity: item.quantity || "",
+            section: item.section_code || item.section_name || "",
+            item_no: item.item_no || item.item_number || "",
         };
     });
 
@@ -159,6 +163,7 @@ function buildPrompt(items: ExtractedItem[], priceList: PriceListRow[]): string 
                 lowerKey.includes("description") ||
                 lowerKey.includes("item") ||
                 lowerKey.includes("size") ||
+                lowerKey.includes("dimension") ||
                 lowerKey.includes("capacity") ||
                 lowerKey.includes("price") ||
                 lowerKey.includes("manhour") ||
@@ -175,62 +180,25 @@ function buildPrompt(items: ExtractedItem[], priceList: PriceListRow[]): string 
     console.log("[price-map] prompt priceListForModel (truncated):", priceListForModel.slice(0, 5));
 
     return `
-You are a senior MEP estimator specializing in fuel systems. Your task is to map estimate items to the correct rows in a price list.
+You are a senior estimator for exhibition stand/booth projects. Your task is to map estimate items (from drawings or BOQ) to the correct rows in a price list and calculate the appropriate price when sizes/dimensions differ.
 
-## SIZE CONVERSION REFERENCE
-Standard inch to mm conversions (CRITICAL - use these exact values):
-| Inch | mm |
-|------|-----|
-| 1/2" | 15mm |
-| 3/4" | 20mm |
-| 1"   | 25mm |
-| 1-1/4" | 32mm |
-| 1-1/2" | 40mm |
-| 2"   | 50mm |
-| 2-1/2" | 65mm |
-| 3"   | 80mm |
-| 4"   | 100mm |
-| 5"   | 125mm |
-| 6"   | 150mm |
-| 8"   | 200mm |
-| 10"  | 250mm |
-| 12"  | 300mm |
 
-## MATCHING RULES BY CATEGORY
 
-**STORAGE_TANK / DAY_TANK:**
-- Match by EXACT capacity (e.g., 10000L, 500 Gal)
-- match by type of tank (day/storage).
-- Return ALL price list rows for that tank type with matching capacity and type of tank
+## MATCHING & SCALING RULES
+- Use ONLY provided data; do not invent dimensions, quantities, finishes, or prices.
+- Prefer matches where description, finishes, section, and item_no align semantically.
+- Normalize sizes (inch → mm) when helpful; also use provided dimensions strings.
+- If price list row is per SQM/LM/UNIT, respect that UOM.
+- If a price list row includes a base size/dimensions, scale the price to the requested item dimensions:
+  - If UOM is SQM: compute target_area = L * W (convert both to meters if possible); scaled_price = unit_price_per_sqm * target_area.
+  - If UOM is LM: compute target_length = L (or perimeter if explicitly stated); scaled_price = unit_price_per_lm * target_length.
+  - If the price row has an embedded size (e.g., panel 3m x 4m) and the item needs a different size, scale proportionally by area (new_area / base_area) * base_price.
+  - If the price row has volumetric dimensions (L x W x H) and the item has different volumetric dimensions, scale proportionally by volume (new_volume / base_volume) * base_price. Example: base 1m x 1m x 1m at $100; target 2m x 1.5m x 1m → volume 3 m³ → scaled_price = 3 * $100 = $300.
+  - If dimensions cannot be parsed, fall back to the listed unit_price without scaling.
+- When multiple price list rows match, return all confident mappings.
 
-**PUMP:**
-- Match by GPM or LPM rating from description/capacity
-- Also consider PSI if specified
-- Return ALL matching pump entries
+## MATCHING RULES BY CATEGORY (legacy fuel-specific hints retained; apply only when relevant)
 
-**BALL_VALVE (BV) / CHECK_VALVE (CV) / GATE_VALVE:**
-- Match by SIZE (in mm after conversion)
-- 3" = 80mm, 4" = 100mm, 1" = 25mm, 2"  = 50mm etc.
-- Return ALL valves of that type with matching size
-
-**PIPE / PIPING:**
-- Ectract the schedule from the description, if available, Match by Schedule (Sch.) 40 or 80, if available
-- Match by SIZE (in mm) and material type if specified
-- Return ALL matching pipe entries for that size
-
-**STRAINER / FLEXIBLE_HOSE / VENT:**
-- Match by SIZE (in mm)
-
-**EMERGENCY_VENT:**
-- return ALL emergency vents with the same size.
-- Match by SIZE (in mm)
-
-**LEVEL INDICATOR**
-- if the tank type is provided, then return all level indicators for that tank type, if not specified, return all level indicators.
-
-**OTHER items:**
-- Match by semantic similarity in description
-- Consider size/capacity if present
 
 
 
@@ -250,20 +218,21 @@ Return ONLY valid JSON in this exact structure:
     {
       "item_index": <zero-based index from items>,
       "price_list_index": <zero-based index from price list>,
-      "unit_price": <exact value from price list row>,
+      "unit_price": <price from price list, or scaled price if dimensions/area/volume differ>,
       "unit_manhour": <exact value from price list row>,
-      "match_reason": "<brief explanation>"
+      "match_reason": "<brief explanation>",
+      "note": "<how scaling was computed if applicable>"
     }
   ]
 }
 
 ## IMPORTANT RULES
-1. Return MULTIPLE mappings per item if multiple price list rows match, Make sure you checked all the price list rows for the item.
-2. Copy unit_price and unit_manhour EXACTLY as they appear in the price list row
-3. Only include confident matches - omit items with no good match
-4. Use zero-based indices
-5. Do NOT include any text outside the JSON
-6. If you find match, continue for the rest of pricing list tems for make sure that all matches are found.
+1. Return MULTIPLE mappings per item if multiple price list rows match; check all rows.
+2. If scaling is required, compute unit_price based on provided dimensions; otherwise copy unit_price/unit_manhour exactly.
+3. Only include confident matches - omit items with no good match.
+4. Use zero-based indices.
+5. Do NOT include any text outside the JSON.
+6. If you find a match, continue checking remaining price list rows for additional matches.
 `.trim();
 }
 
@@ -277,19 +246,7 @@ export async function mapItemsToPriceList(
 
     const client = getOpenAiClient();
 
-    const systemPrompt = `You are an expert MEP (Mechanical, Electrical, Plumbing) estimator with deep knowledge of fuel systems, piping, valves, tanks, and pumps.
-
-Your task is to accurately match estimate items to the correct price list entries.
-
-Key expertise:
-- Understand that pipe sizes are often in inches (1", 2", 3", etc.) and must be converted to mm
-- Know that BV = Ball Valve, CV = Check Valve
-- Recognize tank capacities in Liters, Gallons, or cubic meters
-- Match pumps by flow rate (GPM/LPM) and pressure (PSI/bar)
-
-Be thorough: check EVERY price list row for potential matches.
-Be precise: only return confident matches with exact price values.
-Return valid JSON only.`;
+    const systemPrompt = `You are an expert estimator for exhibition stand/booth projects. Map items to price list entries, honoring finishes, dimensions, and UOM. Scale prices when the price list size differs from the requested dimensions. Do NOT invent data; return JSON only.`;
 
     const response = await client.chat.completions.create({
         model: "gpt-5.2",
