@@ -1,6 +1,6 @@
 import { config } from "../../config";
 import { ExtractedItem } from "../../types/build";
-import { DRAWING_EXTRACTION_PROMPT, DRAWING_SYSTEM_PROMPT, extractAttributesWithOpenAI, parseJsonFromMessage, toItemsArray } from "../parsing/openaiExtractor";
+import { DRAWING_SYSTEM_PROMPT, extractAttributesWithOpenAI, getDrawingExtractionPrompt, parseJsonFromMessage, toItemsArray } from "../parsing/openaiExtractor";
 import { getOpenAiClient } from "./client";
 
 export type ComparisonStatus =
@@ -58,6 +58,7 @@ function tryParseJson(content: string): ComparisonResponse {
 
 export async function extractBoqWithOpenAI(boqPayload: BoqPayload): Promise<{ items: ExtractedItem[]; rawContent: string }> {
     const client = getOpenAiClient();
+    const prompt = await getDrawingExtractionPrompt();
 
     // Reuse the same OpenAI extraction logic/prompt used for drawings
     if (boqPayload.text) {
@@ -73,7 +74,7 @@ export async function extractBoqWithOpenAI(boqPayload: BoqPayload): Promise<{ it
                 content: [
                     {
                         type: "text",
-                        text: `${DRAWING_EXTRACTION_PROMPT}\n\nBuild document name: ${boqPayload.fileName ?? "BOQ"}`,
+                        text: `${prompt}\n\nBuild document name: ${boqPayload.fileName ?? "BOQ"}`,
                     },
                     {
                         type: "image_url",
