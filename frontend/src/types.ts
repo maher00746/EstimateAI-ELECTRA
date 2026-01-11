@@ -14,6 +14,7 @@ export interface ExtractedItem {
   description?: string;
   capacity?: string;
   dimensions?: string;
+  dimensions_reason?: string;
   size?: string;
   quantity?: string;
   finishes?: string;
@@ -90,7 +91,7 @@ export interface DraftFinalizeItem {
 export interface DraftEstimateState {
   activeEstimateStep: EstimateStep;
   reviewStepActive: boolean;
-  extractedFiles: Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string }>;
+  extractedFiles: Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string; rawContent?: string }>;
   boqResults: { boqItems: ExtractedItem[]; comparisons: BoqComparisonRow[] };
   comparisonSelections: Record<number, "drawing" | "boq" | "">;
   comparisonChecked: Record<number, boolean>;

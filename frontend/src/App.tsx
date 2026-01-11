@@ -24,6 +24,7 @@ import {
   fetchDrawingPrompt,
   updateDrawingPrompt,
 } from "./services/api";
+import type { DrawingCategoryKey } from "./services/api";
 import { useAuth } from "./contexts/AuthContext";
 
 const COMPANY_LOGO_URL = "/company.png";
@@ -50,6 +51,15 @@ const STEP_ORDER: Record<EstimateStep, number> = {
 
 type AppPage = "new-estimate" | "drafts" | "drawing-prompt";
 type PricingAccordionId = "items" | "electrical" | "installation" | "venue";
+
+const DRAWING_CATEGORY_DEFS: Array<{ key: DrawingCategoryKey; label: string; helper?: string }> = [
+  { key: "flooring", label: "Flooring" },
+  { key: "walls_and_ceiling", label: "Wall Structure & Ceiling" },
+  { key: "custom_items", label: "Custom-made Items" },
+  { key: "graphics", label: "Graphics" },
+  { key: "furniture", label: "Furniture" },
+  { key: "av", label: "AV" },
+];
 
 const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
   { id: "items", label: "Items" },
@@ -334,6 +344,18 @@ function App() {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
+  const createEmptyCategoryPromptMap = () =>
+    DRAWING_CATEGORY_DEFS.reduce<Record<DrawingCategoryKey, string>>((acc, cat) => {
+      acc[cat.key] = "";
+      return acc;
+    }, {} as Record<DrawingCategoryKey, string>);
+
+  const createEmptyCategoryUpdatedMap = () =>
+    DRAWING_CATEGORY_DEFS.reduce<Record<DrawingCategoryKey, string | null>>((acc, cat) => {
+      acc[cat.key] = null;
+      return acc;
+    }, {} as Record<DrawingCategoryKey, string | null>);
+
   // Close user menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -353,17 +375,26 @@ function App() {
   const [matchingFiles, setMatchingFiles] = useState<File[]>([]);
   const [processingAI, setProcessingAI] = useState(false);
   const [matching, setMatching] = useState(false);
-  const [extractedFiles, setExtractedFiles] = useState<Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string }>>([]);
+  const [extractedFiles, setExtractedFiles] = useState<
+    Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string; rawContent?: string }>
+  >([]);
   const [feedback, setFeedback] = useState<string>("");
   const [loadingStage, setLoadingStage] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activePage, setActivePage] = useState<AppPage>("new-estimate");
   const [drawingPrompt, setDrawingPrompt] = useState("");
+  const [drawingCategoryPrompts, setDrawingCategoryPrompts] = useState<Record<DrawingCategoryKey, string>>(
+    createEmptyCategoryPromptMap
+  );
   const [drawingPromptLoading, setDrawingPromptLoading] = useState(false);
   const [drawingPromptSaving, setDrawingPromptSaving] = useState(false);
   const [drawingPromptError, setDrawingPromptError] = useState("");
   const [drawingPromptUpdatedAt, setDrawingPromptUpdatedAt] = useState<string | null>(null);
-  const [drawingPromptDirty, setDrawingPromptDirty] = useState(false);
+  const [drawingCategoryUpdatedAt, setDrawingCategoryUpdatedAt] = useState<Record<DrawingCategoryKey, string | null>>(
+    createEmptyCategoryUpdatedMap
+  );
+  const [drawingPromptsDirty, setDrawingPromptsDirty] = useState(false);
+  const [activeDrawingPromptSection, setActiveDrawingPromptSection] = useState<string | null>("base");
   const [activeEstimateStep, setActiveEstimateStep] = useState<EstimateStep>("upload");
   const [boqResults, setBoqResults] = useState<{ boqItems: ExtractedItem[]; comparisons: BoqComparisonRow[] }>({ boqItems: [], comparisons: [] });
   const [boqExtractLoading, setBoqExtractLoading] = useState(false);
@@ -788,7 +819,18 @@ function App() {
         if (isCancelled?.()) return;
         setDrawingPrompt(result.prompt ?? "");
         setDrawingPromptUpdatedAt(result.updatedAt ?? null);
-        setDrawingPromptDirty(false);
+        const nextCategoryPrompts = createEmptyCategoryPromptMap();
+        const nextCategoryUpdatedAt = createEmptyCategoryUpdatedMap();
+        DRAWING_CATEGORY_DEFS.forEach((cat) => {
+          const categoryPayload = result.categories?.[cat.key];
+          if (categoryPayload) {
+            nextCategoryPrompts[cat.key] = categoryPayload.prompt ?? "";
+            nextCategoryUpdatedAt[cat.key] = categoryPayload.updatedAt ?? null;
+          }
+        });
+        setDrawingCategoryPrompts(nextCategoryPrompts);
+        setDrawingCategoryUpdatedAt(nextCategoryUpdatedAt);
+        setDrawingPromptsDirty(false);
       } catch (error) {
         if (isCancelled?.()) return;
         setDrawingPromptError((error as Error).message || "Failed to load prompt");
@@ -1007,10 +1049,24 @@ function App() {
     setDrawingPromptSaving(true);
     setDrawingPromptError("");
     try {
-      const result = await updateDrawingPrompt(drawingPrompt);
+      const result = await updateDrawingPrompt({
+        prompt: drawingPrompt,
+        categories: drawingCategoryPrompts,
+      });
       setDrawingPrompt(result.prompt ?? drawingPrompt);
       setDrawingPromptUpdatedAt(result.updatedAt ?? new Date().toISOString());
-      setDrawingPromptDirty(false);
+      const nextCategoryPrompts = createEmptyCategoryPromptMap();
+      const nextCategoryUpdatedAt = createEmptyCategoryUpdatedMap();
+      DRAWING_CATEGORY_DEFS.forEach((cat) => {
+        const categoryPayload = result.categories?.[cat.key];
+        if (categoryPayload) {
+          nextCategoryPrompts[cat.key] = categoryPayload.prompt ?? "";
+          nextCategoryUpdatedAt[cat.key] = categoryPayload.updatedAt ?? null;
+        }
+      });
+      setDrawingCategoryPrompts(nextCategoryPrompts);
+      setDrawingCategoryUpdatedAt(nextCategoryUpdatedAt);
+      setDrawingPromptsDirty(false);
     } catch (error) {
       setDrawingPromptError((error as Error).message || "Failed to save prompt");
     } finally {
@@ -1227,9 +1283,23 @@ function App() {
         let drawingsSucceeded = false;
         if (hasDrawings) {
           const payload = await extractEstimates(matchingFiles);
+          console.log("[drawings/extract] API payload:", payload);
           if (stageInterval) clearInterval(stageInterval);
           const files = payload.files ?? [];
           setExtractedFiles(files);
+          const firstFile = files[0];
+          console.log(
+            "[drawings/extract] first file rawContent preview:",
+            (firstFile?.rawContent ?? "").slice(0, 4000)
+          );
+          console.log(
+            "[drawings/extract] first 10 items (dimensions + reason):",
+            (firstFile?.items ?? []).slice(0, 10).map((item) => ({
+              description: item.description,
+              dimensions: item.dimensions,
+              dimensions_reason: (item as any).dimensions_reason,
+            }))
+          );
           const drawingSelection: Record<string, boolean> = {};
           files.forEach((file, fileIdx) =>
             (file.items || []).forEach((_, itemIdx) => {
@@ -2400,7 +2470,7 @@ function App() {
                 <span className="status" style={{ fontSize: "0.9rem" }}>
                   {drawingPromptSaving
                     ? "Saving..."
-                    : drawingPromptDirty
+                    : drawingPromptsDirty
                       ? "Unsaved changes"
                       : drawingPromptUpdatedAt
                         ? `Last updated ${new Date(drawingPromptUpdatedAt).toLocaleString()}`
@@ -2419,7 +2489,7 @@ function App() {
                     type="button"
                     className="btn-match"
                     onClick={handleDrawingPromptSave}
-                    disabled={drawingPromptLoading || drawingPromptSaving || !drawingPromptDirty}
+                    disabled={drawingPromptLoading || drawingPromptSaving || !drawingPromptsDirty}
                   >
                     {drawingPromptSaving ? "Saving…" : "Save prompt"}
                   </button>
@@ -2444,19 +2514,82 @@ function App() {
                       {drawingPromptError}
                     </div>
                   )}
-                  <div className="form-group">
-                    <label htmlFor="drawingPrompt">OpenAI prompt</label>
-                    <textarea
-                      id="drawingPrompt"
-                      className="form-input"
-                      style={{ minHeight: "360px", fontFamily: "monospace", lineHeight: "1.4" }}
-                      value={drawingPrompt}
-                      onChange={(event) => {
-                        setDrawingPrompt(event.target.value);
-                        setDrawingPromptDirty(true);
-                      }}
-                      placeholder="Enter the prompt used to extract items from drawings"
-                    />
+                  <div className="pricing-accordion">
+                    {[
+                      {
+                        id: "base",
+                        label: "Base prompt",
+                        helper: "Shared across all categories.",
+                        updatedAt: drawingPromptUpdatedAt,
+                        render: () => (
+                          <textarea
+                            id="drawingPrompt"
+                            className="form-input"
+                            style={{ minHeight: "360px", fontFamily: "monospace", lineHeight: "1.4", width: "100%" }}
+                            value={drawingPrompt}
+                            onChange={(event) => {
+                              setDrawingPrompt(event.target.value);
+                              setDrawingPromptsDirty(true);
+                            }}
+                            placeholder="Enter the prompt used to extract items from drawings"
+                          />
+                        ),
+                      },
+                      ...DRAWING_CATEGORY_DEFS.map((cat) => ({
+                        id: cat.key,
+                        label: cat.label,
+                        helper: cat.helper ?? "Leave empty to use the default guidance for this section.",
+                        updatedAt: drawingCategoryUpdatedAt[cat.key],
+                        render: () => (
+                          <textarea
+                            id={`drawingPrompt-${cat.key}`}
+                            className="form-input"
+                            style={{ minHeight: "220px", fontFamily: "monospace", lineHeight: "1.4", width: "100%" }}
+                            value={drawingCategoryPrompts[cat.key] ?? ""}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setDrawingCategoryPrompts((prev) => ({ ...prev, [cat.key]: value }));
+                              setDrawingPromptsDirty(true);
+                            }}
+                            placeholder="Leave empty to use the default guidance for this section"
+                          />
+                        ),
+                      })),
+                    ].map((section) => {
+                      const isOpen = activeDrawingPromptSection === section.id;
+                      return (
+                        <div key={section.id} className={`pricing-accordion__card ${isOpen ? "is-open" : ""}`}>
+                          <button
+                            type="button"
+                            className="pricing-accordion__header"
+                            onClick={() => setActiveDrawingPromptSection(isOpen ? null : section.id)}
+                            aria-pressed={isOpen}
+                          >
+                            <div style={{ textAlign: "left" }}>
+                              <span className="pricing-accordion__label">{section.label}</span>
+                              {section.helper && (
+                                <p className="eyebrow" style={{ marginTop: "0.25rem", opacity: 0.75 }}>
+                                  {section.helper}
+                                </p>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                              <span className="status" style={{ fontSize: "0.85rem", whiteSpace: "nowrap" }}>
+                                {section.updatedAt
+                                  ? `Updated ${new Date(section.updatedAt).toLocaleString()}`
+                                  : "Using default"}
+                              </span>
+                              <span className={`pricing-accordion__chevron ${isOpen ? "is-open" : ""}`} aria-hidden="true">▾</span>
+                            </div>
+                          </button>
+                          {isOpen && (
+                            <div className="pricing-accordion__panel">
+                              {section.render()}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               )}
@@ -2581,6 +2714,7 @@ function App() {
                           <th className="col--description">Description</th>
                           <th className="col--finishes">Finishes</th>
                           <th className="col--dimensions">Dimensions</th>
+                          <th className="col--dimensions" style={{ minWidth: 260 }}>Dimensions reason</th>
                           <th className="col--qty">Quantity</th>
                           <th className="col--uom">UOM</th>
                         </tr>
@@ -2588,7 +2722,7 @@ function App() {
                       {drawingSections.map(section => (
                         <tbody key={section.code || section.title}>
                           <tr className="matches-table__section-row">
-                            <td colSpan={7} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
+                            <td colSpan={8} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
                               {section.title} {section.code && `(${section.code})`} — {section.rows.length ? `${section.rows.length} item(s)` : "No items"}
                             </td>
                           </tr>
@@ -2656,6 +2790,21 @@ function App() {
                                       placeholder="Dimensions"
                                     />
                                   </td>
+                                  <td
+                                    className="finalize-col finalize-col--description finalize-col--description-narrow"
+                                    title={item.dimensions_reason || ""}
+                                  >
+                                    <textarea
+                                      className="form-input form-input--table finalize-textarea"
+                                      value={item.dimensions_reason || ""}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        updateDrawingItemField(fileIdx, itemIdx, "dimensions_reason", e.target.value);
+                                      }}
+                                      placeholder="Explain how dimensions were derived"
+                                      rows={1}
+                                    />
+                                  </td>
                                   <td className="finalize-col finalize-col--qty">
                                     <input
                                       className="form-input form-input--table"
@@ -2683,7 +2832,7 @@ function App() {
                             })
                           ) : (
                             <tr>
-                              <td colSpan={7} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                              <td colSpan={8} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
                                 No drawing items detected in this section.
                               </td>
                             </tr>

@@ -183,6 +183,7 @@ export interface ExtractedFile {
   attributes: AttributeMap;
   items: ExtractedItem[];
   totalPrice?: string;
+  rawContent?: string;
 }
 
 export interface ExtractResponse {
@@ -253,21 +254,39 @@ export async function enrichBoqItems(boqItems: ExtractedItem[]): Promise<{ items
   });
 }
 
+export type DrawingCategoryKey =
+  | "flooring"
+  | "walls_and_ceiling"
+  | "custom_items"
+  | "graphics"
+  | "furniture"
+  | "av";
+
+export interface DrawingPromptCategory {
+  prompt: string;
+  updatedAt?: string | null;
+  isDefault?: boolean;
+}
+
 export interface DrawingPromptResponse {
   key: string;
   prompt: string;
   updatedAt?: string | null;
   isDefault?: boolean;
+  categories?: Partial<Record<DrawingCategoryKey, DrawingPromptCategory>>;
 }
 
 export async function fetchDrawingPrompt(): Promise<DrawingPromptResponse> {
   return safeFetch(`${API_BASE}/api/prompts/drawing-extraction`);
 }
 
-export async function updateDrawingPrompt(prompt: string): Promise<DrawingPromptResponse> {
+export async function updateDrawingPrompt(payload: {
+  prompt?: string;
+  categories?: Partial<Record<DrawingCategoryKey, string>>;
+}): Promise<DrawingPromptResponse> {
   return safeFetch(`${API_BASE}/api/prompts/drawing-extraction`, {
     method: "PUT",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify(payload),
   });
 }
 

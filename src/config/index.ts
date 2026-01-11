@@ -13,6 +13,8 @@ export const config = {
   maxFileSize: 60 * 1024 * 1024, // 60MB per file
   openAiKey: process.env.OPENAI_API_KEY ?? "",
   openAiModel: "gpt-5.2",
+  geminiApiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY ?? "",
+  geminiModel: process.env.GEMINI_MODEL ?? "gemini-3-pro-preview",
   airweaveBaseUrl: (process.env.AIRWEAVE_BASE_URL ?? "https://api.airweave.ai").replace(/\/+$/, ""),
   airweaveApiKey: process.env.AIRWEAVE_API_KEY ?? "",
   airweaveCollectionId: process.env.AIRWEAVE_COLLECTION_ID ?? "",

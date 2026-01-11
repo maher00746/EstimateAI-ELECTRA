@@ -2,91 +2,183 @@ import { config } from "../../config";
 import { AttributeMap, ExtractedItem } from "../../types/build";
 import { getPromptByKey } from "../../modules/storage/promptRepository";
 import { getOpenAiClient } from "../openai/client";
+import { getGeminiClient } from "../gemini/client";
 
 export const DRAWING_SYSTEM_PROMPT =
   "You are a rules-aware parser. Always return JSON, and never add explanatory prose outside the JSON.";
 
 export const DRAWING_EXTRACTION_PROMPT = `
-**Role:** You are a Senior Estimation Engineer for an exhibition stand building company.
-**Task:** Parse the provided architectural drawings/renders and generate a Bill of Quantities (BOQ).
-**Output Format:** A strict JSON Array of Objects.
+You are a Senior Estimation Engineer for an exhibition stand contractor.
+Your task is to analyze architectural inputs (Drawings, Renders, Scope of Work) and generate a Bill of Quantities (BOQ) as a JSON Array.
 
-## 1. Estimation Methodology & Rules
-You must strictly follow these engineering assumptions derived from company standards. Do not merely describe the image; translate it into construction line items.
+**The BOQ consists of 6 specific categories:**
+A. Flooring
+B. Wall Structure & Ceiling
+C. Custom-made Items (Joinery/Fabrication)
+D. Graphics (Branding/Logos)
+E. Furniture (Rental loose items)
+F. AV (Audio Visual Rental)
 
-### Section A: Flooring (Mandatory)
-Regardless of the drawing details, every booth must have these foundational items calculated based on the total booth area (L * W).
-1.  **Raised Platform:** Always A.1.
-    *   *Desc:* "Raised platform"
-    *   *Finish:* "Wooden structure, MDF, Plywood framing"
-    *   *Dim:* Total Area (Lm * Wm * 0.10mH)
-    *   *UOM:* SQM
-2.  **Floor Finish:** A.2 or A.4 (Sequence).
-    *   *Finish:* Detect from render. If wood look: "Glossy finish laminate". If fabric: "Galaxy grade Carpet".
-    *   *UOM:* SQM
-3.  **Plastic Protection:** Always the last item in Section A.
-    *   *Desc:* "Plastic protection"
-    *   *Finish:* "Consumables"
-    *   *UOM:* SQM (Matches total area)
-4.  **Skirting:** Perimeter of open sides.
-    *   *Desc:* "Skirting"
-    *   *Dim:* 0.10mH
-    *   *Finish:* "MDF, Spray paint finish"
-    *   *UOM:* LM (Linear Meter)
-
-### Section B: Wall Structure & Ceiling
-Break down large structures into specific functional components. Do not group all walls into one line.
-*   **Dimensions:** If not explicitly written, estimate based on visual scale (Standard Height: 3.0m - 4.5m, Standard Depth: 0.10m - 0.20m).
-*   **Descriptions:** Use specific names: "Back wall", "Meeting room wall", "Partition wall", "Offset panels", "Ceiling beams".
-*   **Finishes:**
-    *   **Standard Wall:** "Wooden structure, MDF, Roller paint (Bothside/Oneside)".
-    *   **Features:** If the render shows glowing lines, add: "...with LED strip light incorporated".
-    *   **Ceiling:** "Wooden structure, MDF, Roller paint finish".
-
-### Section C: Custom-made Items (Joinery/Carpentry)
-Includes all *built* furniture (Reception desks, podiums, totems, bar counters).
-*   **Desc:** Item Name (e.g., "Reception Table", "Display counter 1").
-*   **Finish:** High-quality finish is assumed. "Wooden structure, MDF, Spray paint finish".
-*   **Logos on Counters:** If a logo is on the furniture, add: "with vinyl sticker logo on front".
-*   **Lighting:** If under-lit, add: "with LED strip light".
-
-### Section D: Graphics
-Identify every logo visible in the renders.
-*   **Locations:** "Logo on ceiling", "Logo on Bulkhead", "Logo on back wall".
-*   **Finish Logic:**
-    *   **Glowing/Thick:** "Acrylic Front lit Logo".
-    *   **Thick/No Glow:** "MDF spray paint nonlit Logo".
-    *   **Flat/Small:** "Vinyl sticker".
-*   **Dimensions:** Estimate text bounding box (L * H).
-
-### Section E: Furniture (Rental)
-Loose/Moveable items (Chairs, Tables, Sofas, Fridges, Racks).
-*   **Desc:** Item Name + "- Rental" (e.g., "Bar Stool - Rental").
-*   **Finish:** Standard text: "Selected from the standard range and subject to availability".
-*   **UOM:** UNIT or NOS.
-
-### Section F: AV (Audio Visual)
-*   **Desc:** Item Name + "- Rental" (e.g., "65 inch TV - Rental").
-*   **LED Walls:** Calculate size (L * H). Finish: "P 2.6 LED".
-*   **UOM:** UNIT.
-
-## 2. JSON Structure Definitions
-Return **only** the JSON array. Do not include markdown formatting or conversational text.
+**Output Format:**
+Return ONLY a valid JSON Array of Objects. No markdown, no conversational text.
 
 **JSON Key Definitions:**
-*   section_code: "A", "B", "C", "D", "E", or "F".
-*   item_no: E.g., "A.1", "B.3".
-*   description: The item name.
-*   dimensions: String format " LmL * WmW * HmH". If N/A, use empty string.
-*   finishes: The material/construction spec.
-*   quantity: Number (Float or Integer).
-*   uom: "SQM", "LM", "UNIT", "NOS".
+*   "section_code": String ("A", "B", "C", "D", "E", or "F").
+*   "item_no": String (e.g., "A.1", "B.1").
+*   "description": String (The Item Name and specific feature).
+*   "dimensions": String (Format: "Lm L x Wm W x Hm H" or "Lm L x Hm H" or "Lm L x Dm D x Hm H" for walls or "Lm L x Wm W" for ceilings. If N/A, use empty string).
+*   "dimensions_reason": String (Briefly explain how you derived the dimensions. Reference drawing annotations if present; otherwise explain the visual estimate and any assumptions/standards used. Do NOT output chain-of-thought; give a short professional justification).
 
-## 3. Input Handling
-If the input PDF contains specific text lists (e.g., "Furniture List: 10 chairs"), prioritize that count. If only images are provided, estimate counts visually.
-## 4. Dimentions
-if the Dimentions are provided in the drawings for each item, or it's written in the text, make sure to use the provided dimentions.
+*   "finishes": String (Material specifications, paint type, lighting).
+*   "quantity": Number (Float or Integer).
+*   "uom": String ("SQM", "LM", "UNIT", "NOS").
+
+**General Estimation Rules:**
+1.  **Dimensions:** Extract carefully from drawings, don't make estimations.
+2.  **Language:** Use professional construction terminology (e.g., "MDF", "Spray paint", "Tempered glass").
+3.  **Extraction:** You will be instructed to extract ONLY ONE category at a time. You must strictly ignore all items belonging to other categories.
 `.trim();
+
+export const DRAWING_CATEGORIES = [
+  { key: "flooring", label: "Flooring" },
+  { key: "walls_and_ceiling", label: "Wall Structure & Ceiling" },
+  { key: "custom_items", label: "Custom-made Items" },
+  { key: "graphics", label: "Graphics" },
+  { key: "furniture", label: "Furniture" },
+  { key: "av", label: "AV" },
+] as const;
+
+export type DrawingCategoryKey = (typeof DRAWING_CATEGORIES)[number]["key"];
+type DrawingCategoryPromptMap = Record<DrawingCategoryKey, string>;
+
+// Category-specific prompt defaults (editable via UI; these are the fallback values)
+export const DRAWING_CATEGORY_PROMPT_DEFAULTS: DrawingCategoryPromptMap = {
+  flooring: `
+  **TASK: Extract SECTION A: FLOORING only.**
+
+**Instructions:**
+Ignore all walls, furniture, AV, and graphics. Focus only on the ground surface and platform.
+
+**Methodology & Mandatory Items:**
+1.  **Total Area:** Calculate the floor under the booth area (Length x Width) based on the input, don't make estimations based on LED or anything else, find the exact dimensions from the drawings.
+2.  **Item A.1 (Mandatory):** You must always include the raised floor.
+    *   Description: "Raised platform - Rental"
+    *   Quantity: Calculate L x W (get the L and M measures from the drawings, the raised floor under the booth from one the available drawings, or maybe in the text if available, round up the numbers "198 cm = 2 m")
+    *   Dimensions: Total Area L x W x 0.10m H
+    *   Finishes: "Wooden structure, MDF, Plywood framing"
+    *   UOM: SQM
+3.  **Item A.2 (Floor Finish):** Identify the visible finish from the render.
+    *   Quantity and Dimensions are same as Item A.1
+    *   If Wood/Glossy: Description "Floor finish", Finish "Glossy finish laminate".
+    *   If Fabric: Description "Floor finish", Finish "Galaxy grade Carpet".
+    *   If specified PVC: Description "Floor finish", Finish "PVC Flooring".
+    *   UOM: SQM (Matches total area).
+4.  **Item A.3 (Skirting):** The edge of the platform.
+    *   Quantity: Calculate perimeter of open sides (Total Perimeter minus Wall lengths).
+    *   Finishes: "MDF, Spray paint finish".
+    *   UOM: LM (Linear Meter).
+5.  **Item A.4 (Ramp):** If the booth has a raised floor, include 1 ramp.
+    *   Finishes: "Wooden structure, MDF".
+    *   UOM: UNIT.
+6.  **Item A.5 (Mandatory):** Floor protection.
+    *   Description: "Plastic protection"
+    *   Finishes: "Consumables"
+    *   UOM: SQM (Matches total area).
+  `.trim(),
+  walls_and_ceiling: `
+  **TASK: Extract SECTION B: WALL STRUCTURE & CEILING only.**
+
+**Instructions:**
+Ignore flooring, loose furniture, counters, and logos. Focus on the architectural build.
+Don't make estimations based on LED or anything else, find the exact dimensions from the drawings.
+
+**Methodology:**
+1.  **Decomposition:** Do not group all walls. Break them down by orientation (e.g., "Back wall", "Left wall system", "Right wall system", "Meeting room wall", "Partition wall", "Offset panels").
+2.  **Dimensions:** Extract L x D x H.
+    *   Standard Depth (D) is 0.10m to 0.20m if not specified.
+    *   Height and Length should be extracted from the drawings, don't make any estimations.
+3.  **Finishes:**
+    *   Standard: "Wooden structure, MDF, Roller paint". (Specify "Bothside" or "Oneside").
+    *   Premium features: If the wall is high-gloss or complex, use "Spray paint finish".
+    *   Lighting: If the wall has glowing lines/coves, add "with LED strip light incorporated".
+    *   Glass Walls/Doors: Description "Glass door - Single/Double". Finish "10mm thick tempered glass with frosted sticker".
+4.  **Ceiling:** Extract overhead elements (Rigging, Beams, Slats).
+    *   Description: "Ceiling beams" or "Wooden slats".
+    *   Finishes: "Wooden structure, MDF, Roller paint finish" (plus "LED strip" if visible).
+    * `.trim(),
+  custom_items: `
+  **TASK: Extract SECTION C: CUSTOM-MADE ITEMS only.**
+
+**Instructions:**
+Ignore structural walls (Section B) and rental chairs/tables (Section E). Focus on FABRICATED/JOINERY furniture.
+Don't make estimations based on LED or anything else, find the exact dimensions from the drawings.
+
+
+**Items to Include:**
+Reception Desks, Display Podiums, Totems, Kiosks, Bar Counters (if built-in), Meeting Tables (only if custom/heavy joinery).
+
+**Methodology:**
+1.  **Description:** Use the specific name from the drawing (e.g., "Reception Table", "Display counter 1").
+2.  **Finishes:** Custom items imply high quality.
+    *   Standard Spec: "Wooden structure, MDF, Spray paint finish".
+    *   Branding: If a logo is on the furniture, add ", with vinyl sticker logo on front".
+    *   Lighting: If under-lit or toe-kick lighting is visible, add ", with LED strip light".
+    *   Texture: If slats are visible, add ", with MDF slats".
+3.  **Dimensions:** Format L x W x H. (e.g., "2.50m L x 0.60m W x 0.90m H").
+4.  **UOM:** Always "UNIT".
+`.trim(),
+  graphics: `
+  **TASK: Extract SECTION D: GRAPHICS only.**
+
+**Instructions:**
+Ignore the wall or desk the logo is attached to. Extract ONLY the branding elements.
+
+**Methodology:**
+1.  **Identify:** Scan ceiling bulkheads, wall headers, and main walls for logos/text.
+2.  **Description:** Be specific about location (e.g., "Main Logo on ceiling", "Logo on Bulkhead (LHS)", "Logo on back wall").
+3.  **Dimensions:** number of letters * Hm H (example: 7 Letters - 0.10m H).
+4.  **Finishes (Rules):**
+    *   **Glowing/Light Emitting:** Finish = "Acrylic Front lit Logo".
+    *   **3D but Non-Glowing:** Finish = "MDF spray paint nonlit Logo".
+    *   **Flat/Painted/Sticker:** Finish = "Vinyl sticker".
+    *   **Canvas Prints:** Finish = "Printed graphics with frame".
+5.  **UOM:** "UNIT".
+`.trim(),
+  furniture: `
+  **TASK: Extract SECTION E: FURNITURE only.**
+
+**Instructions:**
+Ignore built-in custom counters (Section C). Focus on LOOSE / RENTAL items.
+
+**Methodology:**
+1.  **Description:** Always append " - Rental" to the item name. (e.g., "Bar Stool - Rental", "Fridge - Rental").
+2.  **Finishes:** Do not invent materials for rental items. Use this exact phrase: "Selected from the standard range and subject to availability".
+3.  **Dimensions:** Usually empty string "" unless capacity is known (e.g. "200L" for fridge).
+4.  **Quantity:** Count carefully from the render or text list.
+5.  **UOM:** "NOS" (Numbers) or "UNIT".
+`.trim(),
+  av: `
+  **TASK: Extract SECTION F: AV (AUDIO VISUAL) only.**
+
+**Instructions:**
+Ignore static graphics and lighting fixtures. Focus on digital screens.
+Count all the AV in the booth
+
+**Items to Include:**
+LED Video Walls, LCD TVs, Screens.
+
+**Methodology:**
+1.  **Description:** Item Name + " - Rental".
+2.  **LED Walls:**
+    *   Description: "LED Wall - Rental" (or "LED on wall").
+    *   Dimensions: Extract specific L x H (e.g., "3.50m L x 2.00m H").
+    *   Finishes: "P 2.6 LED" or "P 2.9mm P".
+3.  **TVs:**
+    *   Description: "TV (Screen)".
+    *   Finishes: Spec the size (e.g., "65 inch", "55 inch", "24 inch").
+4.  **UOM:** "UNIT" or "NOS".
+`.trim(),
+};
 
 export async function getDrawingExtractionPrompt(): Promise<string> {
   try {
@@ -97,6 +189,22 @@ export async function getDrawingExtractionPrompt(): Promise<string> {
     console.error("[prompts] Failed to load drawing prompt, falling back to default:", error);
     return DRAWING_EXTRACTION_PROMPT;
   }
+}
+
+async function getDrawingCategoryPrompts(): Promise<DrawingCategoryPromptMap> {
+  const resolved: DrawingCategoryPromptMap = { ...DRAWING_CATEGORY_PROMPT_DEFAULTS };
+
+  await Promise.allSettled(
+    DRAWING_CATEGORIES.map(async ({ key }) => {
+      const stored = await getPromptByKey(`drawing-${key}-extraction`);
+      const content = stored?.content?.trim();
+      if (content && content.length > 0) {
+        resolved[key] = content;
+      }
+    })
+  );
+
+  return resolved;
 }
 
 export async function parseJsonFromMessage(message: string): Promise<unknown> {
@@ -142,6 +250,12 @@ export function toItemsArray(payload: unknown): ExtractedItem[] {
         toOptionalString(record.item_number);
       const dimensions =
         toOptionalString((record as Record<string, unknown>).dimensions) ?? toOptionalString(record.size);
+      const dimensionsReason =
+        toOptionalString((record as Record<string, unknown>).dimensions_reason) ??
+        toOptionalString((record as Record<string, unknown>).dimensionsReason) ??
+        toOptionalString((record as Record<string, unknown>).dimension_reason) ??
+        toOptionalString((record as Record<string, unknown>).dimensionReasoning) ??
+        toOptionalString((record as Record<string, unknown>).dimension_reasoning);
       const finishes =
         toOptionalString((record as Record<string, unknown>).finishes) ??
         toOptionalString((record as Record<string, unknown>).finish);
@@ -156,6 +270,7 @@ export function toItemsArray(payload: unknown): ExtractedItem[] {
         description: toOptionalString(record.description),
         capacity: toOptionalString(record.capacity),
         dimensions,
+        dimensions_reason: dimensionsReason ?? toOptionalString(record.remarks),
         size: dimensions ?? toOptionalString(record.size),
         quantity: toOptionalString(record.quantity),
         finishes,
@@ -205,37 +320,179 @@ export async function extractAttributesWithOpenAI(
   options?: ExtractAttributesOptions
 ): Promise<{ attributes: AttributeMap; items: ExtractedItem[]; totalPrice?: string; rawContent?: string }> {
   const trimmed = rawText.replace(/\s+/g, " ");
-  const prompt = options?.promptOverride ?? await getDrawingExtractionPrompt();
+  const [basePrompt, categoryPrompts] = await Promise.all([
+    options?.promptOverride ?? getDrawingExtractionPrompt(),
+    getDrawingCategoryPrompts(),
+  ]);
   const systemPrompt = options?.systemPromptOverride ?? DRAWING_SYSTEM_PROMPT;
   const client = getOpenAiClient();
-  const response = await client.chat.completions.create({
-    model: "gpt-5.2", // drawings extractor should use the latest OpenAI model
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      {
-        role: "user",
-        content: `${prompt}\n\nBuild document name: ${fileName}\n\n${trimmed}`,
-      },
-    ],
-    temperature: 0,
-    max_completion_tokens: 8000, // Increased to handle large documents with many attributes
+
+  const categoryResponses = await Promise.allSettled(
+    DRAWING_CATEGORIES.map(async (category) => {
+      const categoryPrompt = categoryPrompts[category.key];
+      const userPrompt = [
+        basePrompt,
+        `Category focus: ${category.label}`,
+        "Only include items for this category; ignore all other categories.",
+        categoryPrompt ? `Category-specific rules:\n${categoryPrompt}` : null,
+        `Build document name: ${fileName}`,
+        trimmed,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      const response = await client.chat.completions.create({
+        model: "gpt-5.2",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0,
+        max_completion_tokens: 8000,
+      });
+
+      const choice = response.choices?.[0];
+      const rawMessage = choice?.message?.content ?? "";
+      const finishReason = choice?.finish_reason;
+
+      if (finishReason === "length") {
+        throw new Error(
+          `Category ${category.label} response was truncated. Consider increasing max_completion_tokens or splitting the document.`
+        );
+      }
+
+      const parsed = await parseJsonFromMessage(rawMessage);
+      const items = toItemsArray(parsed);
+      return { categoryKey: category.key as DrawingCategoryKey, items, rawContent: rawMessage };
+    })
+  );
+
+  const combinedItems: ExtractedItem[] = [];
+  const rawContentByCategory: Record<DrawingCategoryKey, string> = {
+    flooring: "",
+    walls_and_ceiling: "",
+    custom_items: "",
+    graphics: "",
+    furniture: "",
+    av: "",
+  };
+  const errors: string[] = [];
+
+  categoryResponses.forEach((result, index) => {
+    const { key, label } = DRAWING_CATEGORIES[index];
+    if (result.status === "fulfilled") {
+      combinedItems.push(...result.value.items);
+      rawContentByCategory[key] = result.value.rawContent;
+    } else {
+      errors.push(`${label}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+    }
   });
 
-  const choice = response.choices?.[0];
-  const rawMessage = choice?.message?.content ?? "";
-  const finishReason = choice?.finish_reason;
+  const attributes = structuredItemsToAttributeMap(combinedItems);
+  const rawContent = JSON.stringify({ categories: rawContentByCategory, errors }, null, 2);
 
-  // Check if the response was truncated
-  if (finishReason === 'length') {
-    throw new Error("The document is too large. OpenAI response was truncated. Please increase max_completion_tokens or split the document.");
-  }
-  const parsed = await parseJsonFromMessage(rawMessage);
-  const items = toItemsArray(parsed);
-  const attributes = structuredItemsToAttributeMap(items);
+  return { attributes, items: combinedItems, totalPrice: undefined, rawContent };
+}
 
-  return { attributes, items, totalPrice: undefined, rawContent: rawMessage };
+function toPdfInlineDataPart(pdfBuffer: Buffer) {
+  return {
+    inlineData: {
+      data: pdfBuffer.toString("base64"),
+      mimeType: "application/pdf",
+    },
+  } as const;
+}
+
+export async function extractAttributesFromPdfWithGemini(
+  pdfBuffer: Buffer,
+  fileName: string,
+  options?: ExtractAttributesOptions
+): Promise<{ attributes: AttributeMap; items: ExtractedItem[]; totalPrice?: string; rawContent?: string }> {
+  const [basePrompt, categoryPrompts] = await Promise.all([
+    options?.promptOverride ?? getDrawingExtractionPrompt(),
+    getDrawingCategoryPrompts(),
+  ]);
+
+  const systemPrompt = options?.systemPromptOverride ?? DRAWING_SYSTEM_PROMPT;
+  const gemini = getGeminiClient();
+  const model = gemini.getGenerativeModel({
+    model: config.geminiModel,
+    systemInstruction: systemPrompt,
+  });
+
+  const pdfPart = toPdfInlineDataPart(pdfBuffer);
+
+  const categoryResponses = await Promise.allSettled(
+    DRAWING_CATEGORIES.map(async (category) => {
+      const categoryPrompt = categoryPrompts[category.key];
+      const schemaEnforcement = [
+        "IMPORTANT JSON SCHEMA REQUIREMENTS (must follow even if other prompts disagree):",
+        '- Your response MUST be a JSON Array of Objects (no wrapper object, no markdown).',
+        '- For EVERY item object you output, you MUST include a non-empty string field: "dimensions_reason".',
+        '- "dimensions_reason" must briefly justify how you derived the dimensions (e.g., drawing callout reference, scale-based estimate, standard booth assumptions).',
+        "- Do NOT provide chain-of-thought. Keep it short, professional, and directly tied to the chosen dimension values.",
+        '- If the drawing has no explicit dimension, still set a best estimate and explain the assumption in "dimensions_reason".',
+      ].join("\n");
+
+      const userPrompt = [
+        basePrompt,
+        schemaEnforcement,
+        `Category focus: ${category.label}`,
+        "Only include items for this category; ignore all other categories.",
+        categoryPrompt ? `Category-specific rules:\n${categoryPrompt}` : null,
+        `Build document name: ${fileName}`,
+        "Analyze the attached PDF drawings/renders as the source of truth.",
+        "Return ONLY a JSON Array of Objects (no markdown, no extra text).",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      const result = await model.generateContent({
+        contents: [
+          {
+            role: "user",
+            parts: [pdfPart, { text: userPrompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192,
+        },
+      });
+
+      const rawMessage = result.response.text() ?? "";
+
+      const parsed = await parseJsonFromMessage(rawMessage);
+      const items = toItemsArray(parsed);
+      return { categoryKey: category.key as DrawingCategoryKey, items, rawContent: rawMessage };
+    })
+  );
+
+  const combinedItems: ExtractedItem[] = [];
+  const rawContentByCategory: Record<DrawingCategoryKey, string> = {
+    flooring: "",
+    walls_and_ceiling: "",
+    custom_items: "",
+    graphics: "",
+    furniture: "",
+    av: "",
+  };
+  const errors: string[] = [];
+
+  categoryResponses.forEach((result, index) => {
+    const { key, label } = DRAWING_CATEGORIES[index];
+    if (result.status === "fulfilled") {
+      combinedItems.push(...result.value.items);
+      rawContentByCategory[key] = result.value.rawContent;
+    } else {
+      errors.push(`${label}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+    }
+  });
+
+  const attributes = structuredItemsToAttributeMap(combinedItems);
+  const rawContent = JSON.stringify({ categories: rawContentByCategory, errors }, null, 2);
+
+  return { attributes, items: combinedItems, totalPrice: undefined, rawContent };
 }
 

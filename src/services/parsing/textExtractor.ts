@@ -17,8 +17,8 @@ function resolvePdfParseClass(): PdfParserConstructor {
     (pkg && typeof pkg.PDFParse === "function"
       ? pkg.PDFParse
       : typeof pkg.default === "function"
-      ? pkg.default
-      : null) as unknown as PdfParserConstructor | null;
+        ? pkg.default
+        : null) as unknown as PdfParserConstructor | null;
 
   if (!PdfParseClass) {
     throw new Error("pdf-parse module did not expose a parser class");

@@ -14,6 +14,7 @@ export interface ExtractedItem {
   description?: string;
   capacity?: string;
   dimensions?: string;
+  dimensions_reason?: string;
   size?: string;
   quantity?: string;
   finishes?: string;

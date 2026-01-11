@@ -448,12 +448,13 @@ router.post("/extract", matchUpload, async (req, res, next) => {
 
     const parsedFiles = await Promise.all(
       files.map(async (file) => {
-        const parsed = await parseDocument(file.path);
+        const parsed = await parseDocument(file.path, { includeRawContent: true });
         return {
           fileName: file.originalname,
           attributes: parsed.attributes,
           items: parsed.items,
           totalPrice: parsed.totalPrice,
+          rawContent: parsed.rawContent,
         };
       })
     );
