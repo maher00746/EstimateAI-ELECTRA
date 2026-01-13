@@ -183,6 +183,8 @@ export interface ExtractedFile {
   attributes: AttributeMap;
   items: ExtractedItem[];
   totalPrice?: string;
+  markdown?: string;
+  geminiDebug?: any;
 }
 
 export interface ExtractResponse {

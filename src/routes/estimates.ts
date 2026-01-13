@@ -25,6 +25,7 @@ import { loadPriceList } from "../services/pricing/priceList";
 import { loadAtgTotals } from "../services/pricing/atgSheet";
 import { loadElectricalTotals, calculateProjectCost } from "../services/pricing/electricalSheet";
 import { mapItemsToPriceList } from "../services/openai/priceMapper";
+import { generateDrawingMarkdownWithGemini } from "../services/gemini/drawingMarkdown";
 
 interface CandidateSummary {
   id: string;
@@ -448,12 +449,33 @@ router.post("/extract", matchUpload, async (req, res, next) => {
 
     const parsedFiles = await Promise.all(
       files.map(async (file) => {
-        const parsed = await parseDocument(file.path);
+        // 1) Gemini markdown review (send the original drawing file as-is).
+        // This works for PDF/image drawings and is kept separate from drawings item extraction.
+        let geminiMarkdown = "";
+        let geminiDebug: unknown = null;
+        try {
+          const geminiResp = await generateDrawingMarkdownWithGemini({
+            filePath: file.path,
+            fileName: file.originalname,
+          });
+          geminiMarkdown = geminiResp.markdown || "";
+          geminiDebug = (geminiResp as any).debug ?? null;
+        } catch (err) {
+          console.error("[extract] Gemini markdown generation failed:", err);
+        }
+
+        // 2) Drawings extraction (OpenAI JSON items) - disabled by default.
+        // Do NOT delete this code; keep it behind a flag so it can be re-enabled later.
+        const parsed = config.enableDrawingsExtraction
+          ? await parseDocument(file.path)
+          : { attributes: {}, items: [], totalPrice: undefined as string | undefined };
         return {
           fileName: file.originalname,
           attributes: parsed.attributes,
           items: parsed.items,
           totalPrice: parsed.totalPrice,
+          markdown: geminiMarkdown,
+          geminiDebug,
         };
       })
     );

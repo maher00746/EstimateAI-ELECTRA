@@ -353,7 +353,9 @@ function App() {
   const [matchingFiles, setMatchingFiles] = useState<File[]>([]);
   const [processingAI, setProcessingAI] = useState(false);
   const [matching, setMatching] = useState(false);
-  const [extractedFiles, setExtractedFiles] = useState<Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string }>>([]);
+  const [extractedFiles, setExtractedFiles] = useState<
+    Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string; markdown?: string }>
+  >([]);
   const [feedback, setFeedback] = useState<string>("");
   const [loadingStage, setLoadingStage] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -472,6 +474,8 @@ function App() {
   const [electricalModalOpen, setElectricalModalOpen] = useState(false);
   const [installationModalOpen, setInstallationModalOpen] = useState(false);
   const [venueModalOpen, setVenueModalOpen] = useState(false);
+  const [markdownModalOpen, setMarkdownModalOpen] = useState(false);
+  const [markdownFileIdx, setMarkdownFileIdx] = useState(0);
 
   type SheetItem = { item: string; price: string; selected?: boolean };
   type SelectedSheetItem = { item: string; price: string; qty: string };
@@ -1137,6 +1141,18 @@ function App() {
 
   const hasDrawingData = drawingReviewRows.length > 0;
   const hasBoqData = boqReviewRows.length > 0;
+  const hasDrawingMarkdown = useMemo(
+    () => extractedFiles.some((f) => (f.markdown ?? "").trim().length > 0),
+    [extractedFiles]
+  );
+
+  const markdownCandidates = useMemo(
+    () =>
+      extractedFiles
+        .map((f, idx) => ({ idx, fileName: f.fileName, markdown: (f.markdown ?? "").trim() }))
+        .filter((row) => row.markdown.length > 0),
+    [extractedFiles]
+  );
 
   const buildBoqSelection = useCallback(
     (items: ExtractedItem[]) => {
@@ -1230,6 +1246,23 @@ function App() {
           if (stageInterval) clearInterval(stageInterval);
           const files = payload.files ?? [];
           setExtractedFiles(files);
+          // Debug logs (browser console): LandingAI result + Gemini request summary per file
+          try {
+            if (files.length) {
+              console.groupCollapsed(`[Extraction Debug] ${files.length} file(s)`);
+              files.forEach((f: any) => {
+                if (!f?.geminiDebug) return;
+                console.groupCollapsed(`File: ${f.fileName}`);
+                console.log("LandingAI:", f.geminiDebug?.landingAi);
+                console.log("Gemini Request:", f.geminiDebug?.geminiRequest);
+                console.groupEnd();
+              });
+              console.groupEnd();
+            }
+          } catch (e) {
+            console.warn("Failed to log extraction debug", e);
+          }
+          setMarkdownFileIdx(0);
           const drawingSelection: Record<string, boolean> = {};
           files.forEach((file, fileIdx) =>
             (file.items || []).forEach((_, itemIdx) => {
@@ -2542,6 +2575,15 @@ function App() {
               <div className="upload-actions">
                 <button
                   type="button"
+                  className="btn-secondary"
+                  onClick={() => setMarkdownModalOpen(true)}
+                  disabled={!hasDrawingMarkdown}
+                  title={hasDrawingMarkdown ? "Open Gemini Markdown" : "No Gemini markdown available"}
+                >
+                  Review Markdown
+                </button>
+                <button
+                  type="button"
                   className="btn-match"
                   onClick={handleProceedFromReview}
                   disabled={boqCompareLoading || boqEnrichLoading}
@@ -3765,6 +3807,68 @@ function App() {
                 <button type="button" className="btn-match" onClick={handleConfirmDrawingsOnly}>
                   Yes, proceed
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {markdownModalOpen && (
+          <div className="modal-backdrop">
+            <div className="modal" style={{ maxWidth: "860px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
+                <div>
+                  <h3 style={{ marginBottom: "0.25rem" }}>Gemini Markdown</h3>
+                  <p style={{ marginTop: 0, color: "rgba(227,233,255,0.75)" }}>
+                    Generated from the uploaded drawing file(s).
+                  </p>
+                </div>
+                <button type="button" className="btn-secondary" onClick={() => setMarkdownModalOpen(false)}>
+                  Close
+                </button>
+              </div>
+
+              {markdownCandidates.length > 1 && (
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                  <label style={{ fontWeight: 600 }}>File</label>
+                  <select
+                    className="form-input"
+                    value={markdownFileIdx}
+                    onChange={(e) => setMarkdownFileIdx(Number(e.target.value))}
+                    style={{ height: "2.6rem" }}
+                  >
+                    {markdownCandidates.map((row) => (
+                      <option key={`md-file-${row.idx}`} value={row.idx}>
+                        {row.fileName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div
+                style={{
+                  maxHeight: "70vh",
+                  overflow: "auto",
+                  border: "1px solid rgba(227,233,255,0.18)",
+                  borderRadius: "14px",
+                }}
+              >
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: "1rem",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+                    fontSize: "0.9rem",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {(extractedFiles[markdownFileIdx]?.markdown ?? "").trim().length
+                    ? extractedFiles[markdownFileIdx]?.markdown
+                    : markdownCandidates.map((row) => `## ${row.fileName}\n\n${row.markdown}`.trim()).join("\n\n---\n\n")}
+                </pre>
               </div>
             </div>
           </div>
