@@ -1242,10 +1242,6 @@ function App() {
 
   const hasDrawingData = drawingReviewRows.length > 0;
   const hasBoqData = boqReviewRows.length > 0;
-  const hasDrawingMarkdown = useMemo(
-    () => extractedFiles.some((f) => (f.markdown ?? "").trim().length > 0),
-    [extractedFiles]
-  );
 
   const markdownCandidates = useMemo(
     () =>
@@ -2728,32 +2724,6 @@ function App() {
                       <h2 className="review-title">Review Extraction</h2>
                     </div>
                     <div className="upload-actions">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => {
-                          const file = extractedFiles[markdownFileIdx];
-                          const fileName = file?.fileName || "";
-                          const raw = (file as any)?.geminiDebug?.landingAi?.raw ?? null;
-                          const pdf = drawingPdfPreviews.find((p) => p.fileName === fileName) ?? drawingPdfPreviews[0];
-                          if (!fileName || !pdf?.url) {
-                            setFeedback("Select a PDF drawing file to open manual parse.");
-                            setTimeout(() => setFeedback(""), 3500);
-                            return;
-                          }
-                          if (!raw) {
-                            setFeedback("LandingAI data is not available for this file (check LANDINGAI_API_KEY).");
-                            setTimeout(() => setFeedback(""), 4500);
-                            return;
-                          }
-                          setLandingAiReviewData({ pdfUrl: pdf.url, fileName, raw });
-                          setActivePage("landingai-review");
-                        }}
-                        disabled={!hasDrawingMarkdown || !drawingPdfPreviews.length}
-                        title={!drawingPdfPreviews.length ? "Upload a PDF drawing to enable manual parse" : "Open PDF + LandingAI markdown with grounding boxes"}
-                      >
-                        Manual parse
-                      </button>
                       <button
                         type="button"
                         className="btn-match"
