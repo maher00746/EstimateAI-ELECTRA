@@ -4,6 +4,7 @@ import { getGeminiClient } from "./client";
 import { MediaResolution } from "@google/genai";
 import { parseWithLandingAiToMarkdown } from "../landingai/parseToMarkdown";
 import { extractBoqItemsWithLandingAi } from "../landingai/extractBoq";
+import { getPromptByKey } from "../../modules/storage/promptRepository";
 
 function mimeTypeFromFileName(fileName: string): string {
   const ext = path.extname(fileName).toLowerCase();
@@ -111,6 +112,22 @@ Use LandingAI ONLY to:
 Do not invent anything.
 
 Start transcribing now. Be thorough - every dimension matters.`;
+}
+
+async function resolveGeminiDrawingPrompt(): Promise<{ prompt: string; source: "db" | "default" }> {
+  // Reuse the same DB prompt mechanism already exposed at /prompts/drawing-extraction
+  // If the prompt exists in DB, prefer it; otherwise fall back to the built-in prompt.
+  const key = "drawing-extraction";
+  try {
+    const stored = await getPromptByKey(key);
+    const content = stored?.content;
+    if (typeof content === "string" && content.trim()) {
+      return { prompt: content, source: "db" };
+    }
+  } catch {
+    // fail soft: if DB is unavailable or query fails, just use default prompt
+  }
+  return { prompt: buildPrompt(), source: "default" };
 }
 
 /**
@@ -231,6 +248,8 @@ export async function generateDrawingMarkdownWithGemini(params: {
 
   console.log(`[Gemini] Generating content with model: ${config.geminiModel}`);
 
+  const resolvedPrompt = await resolveGeminiDrawingPrompt();
+
   const geminiRequest = {
     model: config.geminiModel,
     contents: [
@@ -250,7 +269,7 @@ export async function generateDrawingMarkdownWithGemini(params: {
           },
         ]
         : []),
-      { text: buildPrompt() },
+      { text: resolvedPrompt.prompt },
     ],
     config: {
       systemInstruction: SYSTEM_INSTRUCTION,
@@ -294,6 +313,7 @@ export async function generateDrawingMarkdownWithGemini(params: {
         model: geminiRequest.model,
         file: { mimeType, fileUri: uploaded.uri },
         config: geminiRequest.config,
+        promptSource: resolvedPrompt.source,
         textParts: geminiRequest.contents
           .filter((p: any) => typeof p?.text === "string")
           .map((p: any) => ({
