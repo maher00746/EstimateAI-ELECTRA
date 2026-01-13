@@ -28,6 +28,8 @@ export const config = {
   landingAiApiKey: process.env.LANDINGAI_API_KEY ?? "",
   landingAiBaseUrl: (process.env.LANDINGAI_BASE_URL ?? "https://api.va.landing.ai/v1").replace(/\/+$/, ""),
   landingAiParseModel: process.env.LANDINGAI_PARSE_MODEL ?? "dpt-2-latest",
+  // LandingAI ADE Extract (Markdown -> Structured JSON)
+  landingAiExtractModel: process.env.LANDINGAI_EXTRACT_MODEL ?? "extract-latest",
   airweaveBaseUrl: (process.env.AIRWEAVE_BASE_URL ?? "https://api.airweave.ai").replace(/\/+$/, ""),
   airweaveApiKey: process.env.AIRWEAVE_API_KEY ?? "",
   airweaveCollectionId: process.env.AIRWEAVE_COLLECTION_ID ?? "",

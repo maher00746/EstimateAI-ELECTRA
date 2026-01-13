@@ -3,6 +3,7 @@ import { config } from "../../config";
 import { getGeminiClient } from "./client";
 import { MediaResolution } from "@google/genai";
 import { parseWithLandingAiToMarkdown } from "../landingai/parseToMarkdown";
+import { extractBoqItemsWithLandingAi } from "../landingai/extractBoq";
 
 function mimeTypeFromFileName(fileName: string): string {
   const ext = path.extname(fileName).toLowerCase();
@@ -17,57 +18,97 @@ function mimeTypeFromFileName(fileName: string): string {
 const SYSTEM_INSTRUCTION = `You are an expert architectural drawing reader and transcription assistant. You specialize in reading technical drawings, floor plans, elevations, and booth/stand designs. You can read dimension lines, annotations, and measurements with perfect accuracy.`;
 
 function buildPrompt(): string {
-  return `You are looking at architectural/technical drawings. Your task is to extract and transcribe EVERYTHING visible into Markdown format.
+  return `**Role:** You are a Senior Estimation Engineer for an exhibition stand building company.
+**Task:** Parse the provided architectural drawings/renders and generate a Bill of Quantities (BOQ).
+**Output Format:** A strict JSON Array of Objects.
 
-## CRITICAL: DIMENSIONS
-This is the most important part. You MUST read and include ALL dimensions shown in the drawings:
-- Read ALL dimension lines (the lines with arrows/ticks at both ends that show measurements)
-- Read ALL measurement values (e.g., 3000, 2.5m, 10'-0", 1200mm, etc.)
-- For each element/object, note its dimensions: Length × Width × Height
-- Include dimensions from ALL views: floor plans, elevations, sections, details
-- Look for dimension strings (chains of dimensions)
-- Read small text annotations that show sizes
+## 1. Estimation Methodology & Rules
+You must strictly follow these engineering assumptions derived from company standards. Do not merely describe the image; translate it into construction line items.
 
-## What to extract for EACH page/view:
+### Section A: Flooring (Mandatory)
+Regardless of the drawing details, every booth must have these foundational items calculated based on the total booth area (L * D), get these dimensions from flooring of the booth, the dimention that you don't find, try to calculate it based on proportionality.
+1.  **Raised Platform:** Always A.1.
+    *   *Desc:* "Raised platform"
+    *   *Finish:* "Wooden structure, MDF, Plywood framing"
+    *   *Dim:* Total Area (Lm * Wm * 0.10mH)
+    *   *UOM:* SQM
+2.  **Floor Finish:** A.2 or A.4 (Sequence).
+    *   *Finish:* Detect from render. If wood look: "Glossy finish laminate". If fabric: "Galaxy grade Carpet".
+    *   *Dim:* Total Area (Lm * Dm * 0.10mH)
+    *   *UOM:* SQM
+3.  **Plastic Protection:** Always the last item in Section A.
+    *   *Desc:* "Plastic protection"
+    *   *Finish:* "Consumables"
+    *   *Dim:* Total Area (Lm * Dm * 0.10mH)
+    *   *UOM:* SQM (Matches total area)
+4.  **Skirting:** Perimeter of open sides.
+    *   *Desc:* "Skirting"
+    *   *Dim:* 0.10mH
+    *   *Finish:* "MDF, Spray paint finish"
+    *   *UOM:* LM (Linear Meter)
 
-### 1. Title and Page Info
-- Page title, drawing number, scale, revision
+### Section B: Wall Structure & Ceiling
+Break down large structures into specific functional components. Do not group all walls into one line.
+*   **Dimensions:** If not explicitly written, estimate based on visual scale (Standard Height: 3.0m - 4.5m, Standard Depth: 0.10m - 0.20m).
+*   **Descriptions:** Use specific names: "Back wall", "Meeting room wall", "Partition wall", "Offset panels", "Ceiling beams".
+*   **Finishes:**
+    *   **Standard Wall:** "Wooden structure, MDF, Roller paint (Bothside/Oneside)".
+    *   **Features:** If the render shows glowing lines, add: "...with LED strip light incorporated".
+    *   **Ceiling:** "Wooden structure, MDF, Roller paint finish".
 
-### 2. Every Object/Element with its EXACT dimensions:
-Format each item as:
-**[Item Name]**: [Description] | Dimensions: [L] × [W] × [H] or as shown
+### Section C: Custom-made Items (Joinery/Carpentry)
+Includes all *built* furniture (Reception desks, podiums, totems, bar counters).
+*   **Desc:** Item Name (e.g., "Reception Table", "Display counter 1").
+*   **Finish:** High-quality finish is assumed. "Wooden structure, MDF, Spray paint finish".
+*   **Logos on Counters:** If a logo is on the furniture, add: "with vinyl sticker logo on front".
+*   **Lighting:** If under-lit, add: "with LED strip light".
 
-### 3. All Text and Labels
-- Room names, area labels
-- Material callouts
-- Notes and specifications
-- Legend items
+### Section D: Graphics
+Identify every logo visible in the renders.
+*   **Locations:** "Logo on ceiling", "Logo on Bulkhead", "Logo on back wall".
+*   **Finish Logic:**
+    *   **Glowing/Thick:** "Acrylic Front lit Logo".
+    *   **Thick/No Glow:** "MDF spray paint nonlit Logo".
+    *   **Flat/Small:** "Vinyl sticker".
+*   **Dimensions:** Estimate text bounding box (L * H).
 
-### 4. Dimension Annotations
-List ALL dimension values you can see, organized by what they measure:
-- Overall dimensions
-- Wall dimensions
-- Opening dimensions (doors, windows)
-- Furniture/fixture dimensions
-- Heights
-- Depths
+### Section E: Furniture (Rental)
+Loose/Moveable items (Chairs, Tables, Sofas, Fridges, Racks).
+*   **Desc:** Item Name + "- Rental" (e.g., "Bar Stool - Rental").
+*   **Finish:** Standard text: "Selected from the standard range and subject to availability".
+*   **UOM:** UNIT or NOS.
 
-## Output Format
-Use Markdown with:
-- Headings for each page/view
-- Tables for organized data
-- Lists for dimensions
+### Section F: AV (Audio Visual)
+*   **Desc:** Item Name + "- Rental" (e.g., "65 inch TV - Rental").
+*   **LED Walls:** Calculate size (L * H). Finish: "P 2.6 LED".
+*   **UOM:** UNIT.
 
-## Rules
-- Extract EXACT values as shown (do not convert units unless both are shown)
-- Do NOT skip any dimension - even small ones matter
-- Do NOT estimate or assume - only transcribe what is visible
-- Include units exactly as shown (mm, m, cm, ft, in, etc.)
-- If a dimension is partially visible or unclear, note it as "[unclear: approximately X]"
+## 2. JSON Structure Definitions
+Return **only** the JSON array. Do not include markdown formatting or conversational text.
 
+**JSON Key Definitions:**
+*   section_code: "A", "B", "C", "D", "E", or "F".
+*   item_no: E.g., "A.1", "B.3".
+*   description: The item name.
+*   dimensions: String format " LmL * WmW * HmH". If N/A, use empty string.
+*   finishes: The material/construction spec.
+*   quantity: Number (Float or Integer).
+*   uom: "SQM", "LM", "UNIT", "NOS".
+*   landing_ai_id: String UUID from LandingAI chunk id, or null if not found.
+
+
+## 3. Input Handling
+If the input PDF contains specific text lists (e.g., "Furniture List: 10 chairs"), prioritize that count. If only images are provided, estimate counts visually.
+## 4. Dimensions
+if the Dimensions are provided in the drawings for each item, or it's written in the text, make sure to use the provided dimensions.
 ## Additional OCR/Parse Reference (if provided)
-You may also receive a \"LandingAI parsed Markdown\" version of the same PDF. Use it ONLY as a reference to improve completeness (help find text/dimensions),
-but always prefer values you can verify from the PDF itself. Do not invent anything.
+You may also receive a \"LandingAI parsed Markdown\" and/or a \"LandingAI parsed JSON\" (contains chunks with stable ids + per-chunk markdown + grounding boxes).
+
+Use LandingAI ONLY to:
+1) **Attach landing_ai_id**: If an extracted item is clearly present in LandingAI (same item/annotation), set landing_ai_id to the matching LandingAI chunk id. If you cannot confidently match, set landing_ai_id to null.
+2) **Prefer LandingAI dimensions when matched**: If landing_ai_id is not null and the LandingAI chunk markdown contains explicit dimensions, copy those dimensions EXACTLY into the item's dimensions field (do not re-calculate), if many Dimensions are provided, use the maximum value for each dimension (the envilop of the item). If LandingAI has no dimensions for that chunk, keep the best dimensions you can verify from the PDF.
+
+Do not invent anything.
 
 Start transcribing now. Be thorough - every dimension matters.`;
 }
@@ -122,18 +163,48 @@ export async function generateDrawingMarkdownWithGemini(params: {
   // Optional: parse the PDF with LandingAI first, then provide its markdown alongside the PDF to Gemini.
   let landingMarkdown = "";
   let landingDebug: any = null;
+  let landingRaw: any = null;
+  let landingExtraction: any = null;
+  let landingExtractionDebug: any = null;
+  let landingExtractionRaw: any = null;
   if (mimeType === "application/pdf" && config.landingAiApiKey) {
     try {
       console.log(`[LandingAI] Parsing PDF to markdown: ${params.fileName}`);
       const parsed = await parseWithLandingAiToMarkdown({ filePath: params.filePath, fileName: params.fileName });
       landingMarkdown = (parsed.markdown || "").trim();
       landingDebug = parsed.debug ?? null;
+      landingRaw = parsed.raw ?? null;
       console.log(`[LandingAI] Parsed markdown length: ${landingMarkdown.length}`);
+
+      // New step: use LandingAI ADE Extract (multipart/form-data) to get structured BOQ items from markdown.
+      if (landingMarkdown) {
+        try {
+          console.log(`[LandingAI] Extracting BOQ items from markdown: ${params.fileName}`);
+          const extracted = await extractBoqItemsWithLandingAi({
+            markdown: landingMarkdown,
+            sourceFileName: params.fileName,
+          });
+          landingExtraction = extracted.extraction ?? null;
+          landingExtractionRaw = extracted.raw ?? null;
+          landingExtractionDebug = extracted.debug ?? null;
+          console.log(
+            `[LandingAI] Extraction done. Has extraction: ${landingExtraction ? "yes" : "no"}`
+          );
+        } catch (err) {
+          landingExtractionDebug = {
+            error: err instanceof Error ? err.message : String(err),
+          };
+          landingExtractionRaw = null;
+          landingExtraction = null;
+          console.error("[LandingAI] Extract failed (continuing without it):", err);
+        }
+      }
     } catch (err) {
       landingDebug = {
         error: err instanceof Error ? err.message : String(err),
         attempts: (err as any)?.attempts ?? null,
       };
+      landingRaw = null;
       console.error("[LandingAI] Parse failed (continuing without it):", err);
     }
   }
@@ -164,12 +235,18 @@ export async function generateDrawingMarkdownWithGemini(params: {
     model: config.geminiModel,
     contents: [
       { fileData: { fileUri: uploaded.uri, mimeType } },
-      ...(landingMarkdown
+      ...(landingExtractionRaw
         ? [
           {
             text:
-              "LandingAI parsed Markdown (reference; verify against PDF, do not invent):\n\n" +
-              landingMarkdown.slice(0, 200000),
+              "LandingAI extraction JSON (BOQ items extracted from the LandingAI parsed Markdown; reference only; do not invent):\n\n" +
+              (() => {
+                try {
+                  return JSON.stringify(landingExtractionRaw).slice(0, 200000);
+                } catch {
+                  return "";
+                }
+              })(),
           },
         ]
         : []),
@@ -207,6 +284,10 @@ export async function generateDrawingMarkdownWithGemini(params: {
         markdownLength: landingMarkdown.length,
         markdownPreview: landingMarkdown.slice(0, 4000),
         debug: landingDebug,
+        raw: landingRaw,
+        extraction: landingExtraction,
+        extractionDebug: landingExtractionDebug,
+        extractionRaw: landingExtractionRaw,
       },
       geminiRequest: {
         // Avoid logging huge payloads; include a safe summary for browser console.

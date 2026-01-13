@@ -26,6 +26,7 @@ import { loadAtgTotals } from "../services/pricing/atgSheet";
 import { loadElectricalTotals, calculateProjectCost } from "../services/pricing/electricalSheet";
 import { mapItemsToPriceList } from "../services/openai/priceMapper";
 import { generateDrawingMarkdownWithGemini } from "../services/gemini/drawingMarkdown";
+import { parseWithLandingAiToMarkdown } from "../services/landingai/parseToMarkdown";
 
 interface CandidateSummary {
   id: string;
@@ -56,6 +57,44 @@ const matchUpload = upload.fields([
 ]);
 
 const router = Router();
+
+// LandingAI parse endpoint: returns raw ADE parse JSON + markdown grounding info.
+// This is used by the optional "visual review" UI; it does not affect existing flows.
+router.post("/landingai/parse", matchUpload, async (req, res, next) => {
+  try {
+    const fileFields = (req.files ?? {}) as Record<string, unknown>;
+    const multiFiles = Array.isArray((fileFields as any).buildFiles)
+      ? ((fileFields as any).buildFiles as Express.Multer.File[])
+      : [];
+    const singleFile = Array.isArray((fileFields as any).buildFile)
+      ? ((fileFields as any).buildFile as Express.Multer.File[])[0]
+      : (req as any).file as Express.Multer.File | undefined;
+
+    const files = multiFiles.length > 0 ? multiFiles : singleFile ? [singleFile] : [];
+    if (files.length === 0) {
+      return res.status(400).json({ message: "At least one buildFile is required" });
+    }
+
+    const parsedFiles = await Promise.all(
+      files.map(async (file) => {
+        const parsed = await parseWithLandingAiToMarkdown({
+          filePath: file.path,
+          fileName: file.originalname,
+        });
+        return {
+          fileName: file.originalname,
+          markdown: parsed.markdown || "",
+          raw: parsed.raw ?? null,
+          debug: parsed.debug ?? null,
+        };
+      })
+    );
+
+    res.status(200).json({ files: parsedFiles });
+  } catch (error) {
+    next(error);
+  }
+});
 
 async function generatePDFFromAttributes(
   attributes: AttributeMap,
@@ -471,6 +510,7 @@ router.post("/extract", matchUpload, async (req, res, next) => {
           : { attributes: {}, items: [], totalPrice: undefined as string | undefined };
         return {
           fileName: file.originalname,
+          link_to_file: `/files/${path.basename(file.path)}`,
           attributes: parsed.attributes,
           items: parsed.items,
           totalPrice: parsed.totalPrice,

@@ -6,6 +6,7 @@ export interface AttributeValue {
 export type EstimateStep = "upload" | "review" | "compare" | "finalize" | "pricing" | "estimate";
 
 export interface ExtractedItem {
+  landing_ai_id?: string | null;
   section_code?: string;
   section_name?: string;
   item_no?: string;

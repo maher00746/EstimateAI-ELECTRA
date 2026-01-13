@@ -25,6 +25,7 @@ import {
   updateDrawingPrompt,
 } from "./services/api";
 import { useAuth } from "./contexts/AuthContext";
+import LandingAiReview from "./LandingAiReview";
 
 const COMPANY_LOGO_URL = "/company.png";
 const COMPANY_NAME = "XYZ";
@@ -34,7 +35,7 @@ const ESTIMATE_STEPS: Array<{ id: EstimateStep; label: string; description: stri
   { id: "upload", label: "Upload", description: "Drawings & BOQ" },
   { id: "review", label: "Review", description: "Validate extraction" },
   { id: "compare", label: "Compare", description: "BOQ vs drawings" },
-  { id: "finalize", label: "Prepare", description: "Prep for pricing" },
+  { id: "finalize", label: "Editing", description: "Manual Preparation" },
   { id: "pricing", label: "Pricing", description: "Review prices" },
   { id: "estimate", label: "Finalize", description: "Assemble estimate" },
 ];
@@ -48,7 +49,7 @@ const STEP_ORDER: Record<EstimateStep, number> = {
   estimate: 5,
 };
 
-type AppPage = "new-estimate" | "drafts" | "drawing-prompt";
+type AppPage = "new-estimate" | "drafts" | "drawing-prompt" | "landingai-review";
 type PricingAccordionId = "items" | "electrical" | "installation" | "venue";
 
 const PRICING_SECTIONS: Array<{ id: PricingAccordionId; label: string }> = [
@@ -78,6 +79,7 @@ function matchesDescription(item: ExtractedItem, query: string) {
   const search = query.trim().toLowerCase();
   if (!search) return true;
   const haystack = [
+    item.landing_ai_id,
     item.description,
     item.full_description,
     item.finishes,
@@ -202,133 +204,6 @@ function ResizableTh({ resize, index, className, children }: { resize: ColumnRes
 
 
 
-function EditableItemsTable({
-  items,
-  onChange,
-  title,
-  searchQuery,
-  onSearchChange,
-}: {
-  items: Array<{ item: ExtractedItem; source: ItemSource }>;
-  onChange: (next: Array<{ item: ExtractedItem; source: ItemSource }>) => void;
-  title: string;
-  searchQuery: string;
-  onSearchChange: (value: string) => void;
-}) {
-  const handleChange = (idx: number, field: keyof ExtractedItem, value: string) => {
-    const next = [...items];
-    next[idx] = { ...next[idx], item: { ...next[idx].item, [field]: value } };
-    onChange(next);
-  };
-
-  const filteredItems = useMemo(
-    () =>
-      items
-        .map((item, idx) => ({ item, idx }))
-        .filter(({ item }) => matchesDescription(item.item, searchQuery)),
-    [items, searchQuery]
-  );
-
-  return (
-    <div className="table-wrapper">
-      <div className="panel__header" style={{ marginBottom: "0.5rem", alignItems: "flex-end", gap: "0.75rem" }}>
-        {title && <p className="eyebrow">{title}</p>}
-        <div style={{ marginLeft: "auto" }}>
-          <input
-            className="form-input form-input--table"
-            placeholder="Search description…"
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            style={{ width: "240px" }}
-          />
-        </div>
-      </div>
-      <table className="matches-table resizable-table finalize-table">
-        <thead>
-          <tr>
-            <th className="finalize-col finalize-col--number">No.</th>
-            <th className="finalize-col finalize-col--description finalize-col--description-narrow">Description</th>
-            <th className="finalize-col finalize-col--finishes finalize-col--finishes-wide">Finishes</th>
-            <th className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide">Dimensions</th>
-            <th className="finalize-col finalize-col--qty">Quantity</th>
-            <th className="finalize-col finalize-col--unit">UOM</th>
-            <th className="finalize-col finalize-col--source">Source</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredItems.length ? filteredItems.map(({ item, idx }) => (
-            <tr key={`finalize-${idx}`} className="matches-table__row">
-              <td className="finalize-col finalize-col--number">
-                <span className="cell-text" title={item.item.item_no || item.item.item_number || ""}>
-                  {item.item.item_no || item.item.item_number || "—"}
-                </span>
-              </td>
-              <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.item.description || item.item.full_description || ""}>
-                <textarea
-                  className="form-input form-input--table finalize-textarea"
-                  value={item.item.description || item.item.full_description || ""}
-                  onChange={(e) => handleChange(idx, "description", e.target.value)}
-                  placeholder="Description"
-                  rows={1}
-                />
-              </td>
-              <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.item.finishes || ""}>
-                <input
-                  className="form-input form-input--table"
-                  value={item.item.finishes || ""}
-                  onChange={(e) => handleChange(idx, "finishes", e.target.value)}
-                  placeholder="Finishes"
-                />
-              </td>
-              <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.item.dimensions || item.item.size || ""}>
-                <input
-                  className="form-input form-input--table"
-                  value={item.item.dimensions || item.item.size || ""}
-                  onChange={(e) => {
-                    handleChange(idx, "dimensions", e.target.value);
-                    handleChange(idx, "size", e.target.value);
-                  }}
-                  placeholder="Dimensions"
-                />
-              </td>
-              <td className="finalize-col finalize-col--qty">
-                <input
-                  className="form-input form-input--table"
-                  value={item.item.quantity || ""}
-                  onChange={(e) => handleChange(idx, "quantity", e.target.value)}
-                  placeholder="Qty"
-                />
-              </td>
-              <td className="finalize-col finalize-col--unit">
-                <input
-                  className="form-input form-input--table"
-                  value={item.item.unit || ""}
-                  onChange={(e) => handleChange(idx, "unit", e.target.value)}
-                  placeholder="UOM"
-                />
-              </td>
-              <td className="finalize-col finalize-col--source">
-                <input
-                  className="form-input form-input--table"
-                  value={item.source || "manual"}
-                  readOnly
-                  disabled
-                />
-              </td>
-            </tr>
-          )) : (
-            <tr>
-              <td colSpan={6} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
-                No items match this description search.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function App() {
   const { user, logout } = useAuth();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -354,12 +229,18 @@ function App() {
   const [processingAI, setProcessingAI] = useState(false);
   const [matching, setMatching] = useState(false);
   const [extractedFiles, setExtractedFiles] = useState<
-    Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string; markdown?: string }>
+    Array<{ fileName: string; items: ExtractedItem[]; totalPrice?: string; markdown?: string; geminiDebug?: any }>
   >([]);
   const [feedback, setFeedback] = useState<string>("");
   const [loadingStage, setLoadingStage] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activePage, setActivePage] = useState<AppPage>("new-estimate");
+  const [landingAiReviewData, setLandingAiReviewData] = useState<null | { pdfUrl: string; fileName: string; raw: unknown }>(null);
+  const [prepareSelectedChunkId, setPrepareSelectedChunkId] = useState<string>("");
+  const prepareTableRowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+  const prepareTableScrollRef = useRef<HTMLDivElement | null>(null);
+  const prepareSelectionSourceRef = useRef<"pdf" | "table" | null>(null);
+  const [drawingPdfPreviews, setDrawingPdfPreviews] = useState<Array<{ fileName: string; url: string }>>([]);
   const [drawingPrompt, setDrawingPrompt] = useState("");
   const [drawingPromptLoading, setDrawingPromptLoading] = useState(false);
   const [drawingPromptSaving, setDrawingPromptSaving] = useState(false);
@@ -377,7 +258,7 @@ function App() {
   const [finalizeItems, setFinalizeItems] = useState<Array<{ item: ExtractedItem; source: ItemSource }>>([]);
   const [drawingSearch, setDrawingSearch] = useState("");
   const [boqSearch, setBoqSearch] = useState("");
-  const [finalizeSearch, setFinalizeSearch] = useState("");
+  // Note: Prepare panel uses section-level "+ Add row" (no global search).
   const [comparisonSelections, setComparisonSelections] = useState<Record<number, "drawing" | "boq" | "">>({});
   const [comparisonChecked, setComparisonChecked] = useState<Record<number, boolean>>({});
   const [pricingSelections, setPricingSelections] = useState<Array<{ source: ItemSource; item: ExtractedItem }>>([]);
@@ -403,6 +284,31 @@ function App() {
     supervisors: "0",
     location: "riyadh",
   });
+  const isPrepareStep = activePage === "new-estimate" && activeEstimateStep === "finalize";
+
+  useEffect(() => {
+    const url = landingAiReviewData?.pdfUrl;
+    return () => {
+      if (url && url.startsWith("blob:")) URL.revokeObjectURL(url);
+    };
+  }, [landingAiReviewData?.pdfUrl]);
+
+  useEffect(() => {
+    return () => {
+      drawingPdfPreviews.forEach((p) => {
+        if (p.url.startsWith("blob:")) URL.revokeObjectURL(p.url);
+      });
+    };
+  }, [drawingPdfPreviews]);
+
+  // When loading a draft, we won't have local blob URLs. Rebuild PDF previews from the saved /files links.
+  useEffect(() => {
+    if (drawingPdfPreviews.length) return;
+    const pdfs = extractedFiles
+      .filter((f: any) => typeof f?.link_to_file === "string" && f.fileName?.toLowerCase?.().endsWith(".pdf"))
+      .map((f: any) => ({ fileName: f.fileName as string, url: f.link_to_file as string }));
+    if (pdfs.length) setDrawingPdfPreviews(pdfs);
+  }, [drawingPdfPreviews.length, extractedFiles]);
   const mapSheetRows = useCallback((rows: PriceListRow[]): SheetItem[] => {
     return rows
       .map((row) => {
@@ -474,7 +380,6 @@ function App() {
   const [electricalModalOpen, setElectricalModalOpen] = useState(false);
   const [installationModalOpen, setInstallationModalOpen] = useState(false);
   const [venueModalOpen, setVenueModalOpen] = useState(false);
-  const [markdownModalOpen, setMarkdownModalOpen] = useState(false);
   const [markdownFileIdx, setMarkdownFileIdx] = useState(0);
 
   type SheetItem = { item: string; price: string; selected?: boolean };
@@ -1043,6 +948,84 @@ function App() {
   const buildDrawingRowKey = (fileIdx: number, itemIdx: number) => `d-${fileIdx}-${itemIdx}`;
   const buildBoqRowKey = (itemIdx: number) => `b-${itemIdx}`;
 
+  const parseGeminiItemsToExtractedItems = useCallback((text: string): ExtractedItem[] => {
+    const raw = String(text || "").trim();
+    if (!raw) return [];
+
+    const tryParse = (jsonText: string): any => {
+      try {
+        return JSON.parse(jsonText);
+      } catch {
+        return null;
+      }
+    };
+
+    // 1) Direct parse
+    let parsed: any = tryParse(raw);
+
+    // 2) Strip code fences if present
+    if (!parsed && raw.includes("```")) {
+      const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenceMatch?.[1]) parsed = tryParse(fenceMatch[1].trim());
+    }
+
+    // 3) Try extracting the first JSON array substring
+    if (!parsed) {
+      const start = raw.indexOf("[");
+      const end = raw.lastIndexOf("]");
+      if (start >= 0 && end > start) {
+        parsed = tryParse(raw.slice(start, end + 1));
+      }
+    }
+
+    const arr =
+      Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === "object"
+          ? (Array.isArray((parsed as any).items) ? (parsed as any).items
+            : Array.isArray((parsed as any).parsed_boq) ? (parsed as any).parsed_boq
+              : Array.isArray((parsed as any).result) ? (parsed as any).result
+                : Array.isArray((parsed as any).data) ? (parsed as any).data
+                  : null)
+          : null;
+
+    if (!Array.isArray(arr)) return [];
+
+    return arr.map((it: any) => {
+      const quantity =
+        it?.quantity !== undefined && it?.quantity !== null && it?.quantity !== ""
+          ? String(it.quantity)
+          : "";
+      const unit = String(it?.uom ?? it?.UOM ?? it?.unit ?? it?.Unit ?? "");
+      const dimensions = String(it?.dimensions ?? it?.dimension ?? it?.size ?? "");
+      const landingAiId =
+        it?.landing_ai_id ??
+        it?.landingAiId ??
+        it?.landing_aiid ??
+        it?.landingAIId ??
+        it?.landing_ai_chunk_id ??
+        it?.chunk_id ??
+        it?.chunkId ??
+        it?.id ??
+        null;
+      return {
+        landing_ai_id: landingAiId ? String(landingAiId) : null,
+        section_code: it?.section_code ?? it?.section ?? undefined,
+        section_name: it?.section_name ?? undefined,
+        item_no: it?.item_no ?? it?.itemNo ?? it?.item_number ?? it?.itemNumber ?? undefined,
+        item_number: it?.item_number ?? it?.itemNumber ?? undefined,
+        item_type: it?.item_type ?? undefined,
+        description: it?.description ?? it?.desc ?? it?.name ?? "",
+        finishes: it?.finishes ?? it?.finish ?? "",
+        dimensions,
+        size: dimensions,
+        quantity,
+        unit,
+        remarks: it?.remarks ?? "",
+      } satisfies ExtractedItem;
+    });
+  }, []);
+
   const drawingReviewRows = useMemo(
     () =>
       extractedFiles.flatMap((file, fileIdx) =>
@@ -1113,6 +1096,124 @@ function App() {
     [filteredBoqReviewRows, selectedBoqRows]
   );
 
+  const prepareLandingContext = useMemo(() => {
+    const file = extractedFiles[markdownFileIdx];
+    const fileName = file?.fileName || "";
+    const raw = (file as any)?.geminiDebug?.landingAi?.raw ?? null;
+    const pdf = drawingPdfPreviews.find((p) => p.fileName === fileName) ?? drawingPdfPreviews[0] ?? null;
+    return { fileName, raw, pdfUrl: pdf?.url ?? "" };
+  }, [drawingPdfPreviews, extractedFiles, markdownFileIdx]);
+
+  const updateFinalizeItemField = useCallback((idx: number, field: keyof ExtractedItem, value: string) => {
+    setFinalizeItems((prev) => {
+      const next = [...prev];
+      if (!next[idx]) return prev;
+      next[idx] = { ...next[idx], item: { ...next[idx].item, [field]: value } };
+      return next;
+    });
+  }, []);
+
+  const finalizeRowsForPrepare = useMemo(
+    () => finalizeItems.map((entry, idx) => ({ entry, idx })),
+    [finalizeItems]
+  );
+
+  const finalizeSectionsForPrepare = useMemo(() => {
+    const baseSections = DRAWING_SECTIONS.map((section) => ({
+      ...section,
+      rows: [] as Array<{ entry: (typeof finalizeItems)[number]; idx: number }>,
+    }));
+    const sectionLookup = baseSections.reduce<Record<string, (typeof baseSections)[number]>>((acc, section) => {
+      acc[section.code] = section;
+      return acc;
+    }, {});
+    const uncategorized: Array<{ entry: (typeof finalizeItems)[number]; idx: number }> = [];
+
+    finalizeRowsForPrepare.forEach(({ entry, idx }) => {
+      const code = resolveSectionCode(entry.item);
+      if (code && sectionLookup[code]) {
+        sectionLookup[code].rows.push({ entry, idx });
+      } else {
+        uncategorized.push({ entry, idx });
+      }
+    });
+
+    return uncategorized.length
+      ? [...baseSections, { code: "other", title: "Uncategorized", rows: uncategorized }]
+      : baseSections;
+  }, [finalizeRowsForPrepare]);
+
+  const addFinalizeRowForSection = useCallback((sectionCode: string) => {
+    const normalized = (sectionCode || "").toUpperCase();
+    const code = normalized && normalized !== "OTHER" ? normalized : "U";
+    const prefix = `${code}.`;
+
+    const parseSuffix = (value: string) => {
+      const s = String(value || "").trim().toUpperCase();
+      if (!s.startsWith(prefix)) return null;
+      const n = Number.parseInt(s.slice(prefix.length), 10);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    setFinalizeItems((prev) => {
+      let max = 0;
+      prev.forEach((row) => {
+        const num = parseSuffix(String(row.item.item_no || row.item.item_number || ""));
+        if (num && num > max) max = num;
+      });
+      const nextNo = `${code}.${max + 1}`;
+
+      const newEntry: { item: ExtractedItem; source: ItemSource } = {
+        source: "manual",
+        item: {
+          landing_ai_id: null,
+          section_code: code === "U" ? undefined : code,
+          item_no: nextNo,
+          description: "",
+          finishes: "",
+          dimensions: "",
+          size: "",
+          quantity: "",
+          unit: "",
+        },
+      };
+
+      // Insert after the last row that clearly belongs to this section (keeps table grouping stable).
+      const belongs = (it: ExtractedItem) => {
+        const sc = String(it.section_code || "").trim().toUpperCase();
+        const ino = String(it.item_no || it.item_number || "").trim().toUpperCase();
+        if (code === "U") {
+          const first = (sc || ino.charAt(0) || "").toUpperCase();
+          return !DRAWING_SECTION_CODE_SET.has(first);
+        }
+        if (sc === code) return true;
+        if (ino.startsWith(prefix)) return true;
+        return false;
+      };
+
+      let insertAt = prev.length;
+      for (let i = 0; i < prev.length; i++) {
+        if (belongs(prev[i].item)) insertAt = i + 1;
+      }
+
+      const next = [...prev];
+      next.splice(insertAt, 0, newEntry);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!prepareSelectedChunkId) return;
+    // Avoid feedback loop: only scroll the table when selection originated from PDF.
+    if (prepareSelectionSourceRef.current !== "pdf") return;
+    const root = prepareTableScrollRef.current;
+    if (!root) return;
+    const row = prepareTableRowRefs.current[prepareSelectedChunkId];
+    if (!row) return;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    prepareSelectionSourceRef.current = null;
+  }, [prepareSelectedChunkId]);
+
   const setAllDrawingSelection = useCallback(
     (checked: boolean) => {
       setSelectedDrawingRows(prev => {
@@ -1153,6 +1254,14 @@ function App() {
         .filter((row) => row.markdown.length > 0),
     [extractedFiles]
   );
+
+  useEffect(() => {
+    if (!markdownCandidates.length) return;
+    const hasCurrent = markdownCandidates.some((row) => row.idx === markdownFileIdx);
+    if (!hasCurrent) {
+      setMarkdownFileIdx(markdownCandidates[0].idx);
+    }
+  }, [markdownCandidates, markdownFileIdx]);
 
   const buildBoqSelection = useCallback(
     (items: ExtractedItem[]) => {
@@ -1244,15 +1353,20 @@ function App() {
         if (hasDrawings) {
           const payload = await extractEstimates(matchingFiles);
           if (stageInterval) clearInterval(stageInterval);
-          const files = payload.files ?? [];
+          const files = (payload.files ?? []).map((f: any) => {
+            const existingItems = Array.isArray(f?.items) ? f.items : [];
+            const parsedFromGemini = existingItems.length ? existingItems : parseGeminiItemsToExtractedItems(String(f?.markdown ?? ""));
+            return { ...f, items: parsedFromGemini };
+          });
           setExtractedFiles(files);
-          // Debug logs (browser console): LandingAI result + Gemini request summary per file
+          // Debug logs (browser console): Gemini results + LandingAI result + Gemini request summary per file
           try {
             if (files.length) {
               console.groupCollapsed(`[Extraction Debug] ${files.length} file(s)`);
               files.forEach((f: any) => {
                 if (!f?.geminiDebug) return;
                 console.groupCollapsed(`File: ${f.fileName}`);
+                console.log("Gemini Items:", f.items);
                 console.log("LandingAI:", f.geminiDebug?.landingAi);
                 console.log("Gemini Request:", f.geminiDebug?.geminiRequest);
                 console.groupEnd();
@@ -1265,7 +1379,7 @@ function App() {
           setMarkdownFileIdx(0);
           const drawingSelection: Record<string, boolean> = {};
           files.forEach((file, fileIdx) =>
-            (file.items || []).forEach((_, itemIdx) => {
+            (file.items || []).forEach((_item: ExtractedItem, itemIdx: number) => {
               drawingSelection[`d-${fileIdx}-${itemIdx}`] = true;
             })
           );
@@ -1322,7 +1436,7 @@ function App() {
         setLoadingStage(0);
       }
     },
-    [enrichBoqSizeAndCapacity, loadingMessages.length, matchingFiles, pendingBoqFile]
+    [enrichBoqSizeAndCapacity, loadingMessages.length, matchingFiles, pendingBoqFile, parseGeminiItemsToExtractedItems]
   );
 
   const handleExtract = async (event: React.FormEvent, skipConfirm?: boolean) => {
@@ -2253,7 +2367,29 @@ function App() {
           </p>
         </div>
       </aside>
-      <main className="content">
+      <main
+        className="content"
+        style={
+          activePage === "landingai-review"
+            ? {
+              padding: 0,
+              maxWidth: "none",
+              height: "100vh",
+              overflow: "hidden",
+            }
+            : isPrepareStep
+              ? {
+                maxWidth: "none",
+                height: "100vh",
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+                padding: "1rem",
+                boxSizing: "border-box",
+              }
+              : undefined
+        }
+      >
         {processingMessage && (
           <div className="processing-overlay">
             <div className="processing-indicator">
@@ -2314,1564 +2450,1693 @@ function App() {
             </div>
           </div>
         )}
-        <header className="hero">
-          <div>
-            <h1>{heroTitle}</h1>
-          </div>
-          <div style={{ position: "relative" }} ref={userMenuRef}>
-            <button
-              type="button"
-              onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-              className="user-menu-trigger"
-              aria-label="User menu"
-              aria-expanded={isUserMenuOpen}
-            >
-              <div className="user-avatar">
-                <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
-                  <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M4 17c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
+
+        {activePage === "landingai-review" && landingAiReviewData && (
+          <LandingAiReview
+            pdfUrl={landingAiReviewData.pdfUrl}
+            landingAiRaw={landingAiReviewData.raw}
+            fileName={landingAiReviewData.fileName}
+            onBack={() => {
+              setLandingAiReviewData(null);
+              setActivePage("new-estimate");
+              setReviewStepActive(true);
+              setActiveEstimateStep("review");
+            }}
+          />
+        )}
+
+        {activePage !== "landingai-review" && (
+          <>
+            <header className="hero">
+              <div>
+                <h1>{heroTitle}</h1>
               </div>
-              <span className="user-menu-username">{user?.username || "User"}</span>
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 16 16"
-                fill="none"
-                style={{
-                  transform: isUserMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 0.2s ease"
-                }}
-              >
-                <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-            {isUserMenuOpen && (
-              <div className="user-menu-dropdown">
-                <div className="user-menu-header">
-                  <div className="user-avatar user-avatar--large">
-                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+              <div style={{ position: "relative" }} ref={userMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  className="user-menu-trigger"
+                  aria-label="User menu"
+                  aria-expanded={isUserMenuOpen}
+                >
+                  <div className="user-avatar">
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
                       <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
                       <path d="M4 17c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                     </svg>
                   </div>
-                  <div className="user-menu-info">
-                    <p className="user-menu-name">{user?.username || "User"}</p>
-                    <p className="user-menu-email">{user?.email || ""}</p>
-                  </div>
-                </div>
-                <div className="user-menu-divider"></div>
-                <button
-                  type="button"
-                  className="user-menu-item user-menu-item--danger"
-                  onClick={async () => {
-                    setIsUserMenuOpen(false);
-                    await logout();
-                  }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
-                    <path d="M6 2H4a2 2 0 00-2 2v12a2 2 0 002 2h2M12 2h2a2 2 0 012 2v12a2 2 0 01-2 2h-2M6 9h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span>Logout</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </header>
-
-        {activePage === "new-estimate" && (
-          <div className="stepper" role="navigation" aria-label="Estimate workflow">
-            {ESTIMATE_STEPS.map((step, idx) => {
-              const status = getStepStatus(step.id);
-              const isClickable = canNavigateToStep(step.id);
-              return (
-                <div className="stepper__segment" key={step.id}>
-                  <button
-                    type="button"
-                    className={`stepper__item stepper__item--${status} ${isClickable ? "is-clickable" : "is-disabled"}`}
-                    onClick={() => handleStepChange(step.id)}
-                    disabled={!isClickable}
-                    aria-current={status === "current" ? "step" : undefined}
-                  >
-                    <span className={`stepper__circle ${status === "complete" ? "is-complete" : ""}`}>
-                      {status === "complete" ? (
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                          <path d="M4 8l3 3 5-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      ) : (
-                        idx + 1
-                      )}
-                    </span>
-                    <span className="stepper__meta">
-                      <span className="stepper__label">{step.label}</span>
-                      <span className="stepper__desc">{step.description}</span>
-                    </span>
-                  </button>
-                  {idx < ESTIMATE_STEPS.length - 1 && (
-                    <div
-                      className={`stepper__connector ${STEP_ORDER[step.id] < STEP_ORDER[activeEstimateStep] ? "is-complete" : ""}`}
-                      aria-hidden="true"
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {activePage === "drawing-prompt" && (
-          <section id="drawing-prompt" className="panel">
-            <div className="panel__header">
-              <div>
-                <p className="eyebrow">OpenAI</p>
-                <h2>Drawing Extraction Prompt</h2>
-                <p className="eyebrow" style={{ opacity: 0.7, marginTop: "0.35rem" }}>
-                  Used when extracting items from drawings or BOQ images.
-                </p>
-              </div>
-              <div className="upload-actions" style={{ gap: "0.5rem", flexDirection: "column", alignItems: "flex-end" }}>
-                <span className="status" style={{ fontSize: "0.9rem" }}>
-                  {drawingPromptSaving
-                    ? "Saving..."
-                    : drawingPromptDirty
-                      ? "Unsaved changes"
-                      : drawingPromptUpdatedAt
-                        ? `Last updated ${new Date(drawingPromptUpdatedAt).toLocaleString()}`
-                        : "Using default prompt"}
-                </span>
-                <div style={{ display: "flex", gap: "0.5rem" }}>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => loadDrawingPrompt()}
-                    disabled={drawingPromptLoading || drawingPromptSaving}
-                  >
-                    Reload
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-match"
-                    onClick={handleDrawingPromptSave}
-                    disabled={drawingPromptLoading || drawingPromptSaving || !drawingPromptDirty}
-                  >
-                    {drawingPromptSaving ? "Saving…" : "Save prompt"}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="panel__body">
-              {drawingPromptLoading ? (
-                <div className="loading-container">
-                  <div className="loading-spinner">
-                    <svg width="48" height="48" viewBox="0 0 48 48" className="spinner">
-                      <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="100" strokeDashoffset="25" strokeLinecap="round" />
-                    </svg>
-                  </div>
-                  <p className="loading-text">Loading prompt...</p>
-                </div>
-              ) : (
-                <>
-                  {drawingPromptError && (
-                    <div className="error-text" style={{ color: "#ffb6b6", marginBottom: "0.75rem" }}>
-                      {drawingPromptError}
-                    </div>
-                  )}
-                  <div className="form-group">
-                    <label htmlFor="drawingPrompt">OpenAI prompt</label>
-                    <textarea
-                      id="drawingPrompt"
-                      className="form-input"
-                      style={{ minHeight: "360px", fontFamily: "monospace", lineHeight: "1.4" }}
-                      value={drawingPrompt}
-                      onChange={(event) => {
-                        setDrawingPrompt(event.target.value);
-                        setDrawingPromptDirty(true);
-                      }}
-                      placeholder="Enter the prompt used to extract items from drawings"
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-          </section>
-        )}
-
-        {activePage === "drafts" && (
-          <section id="drafts" className="panel">
-            <div className="panel__header">
-              <div>
-                <p className="eyebrow">Drafts</p>
-                <h2>My Drafts</h2>
-              </div>
-              <div className="upload-actions" style={{ gap: "0.5rem" }}>
-                <button type="button" onClick={() => refreshDrafts()} disabled={draftsLoading}>
-                  {draftsLoading ? "Refreshing…" : "Refresh"}
-                </button>
-              </div>
-            </div>
-
-            {draftsLoading ? (
-              <div className="loading-container">
-                <div className="loading-spinner">
-                  <svg width="48" height="48" viewBox="0 0 48 48" className="spinner">
-                    <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="100" strokeDashoffset="25" strokeLinecap="round" />
-                  </svg>
-                </div>
-                <p className="loading-text">Loading drafts...</p>
-              </div>
-            ) : drafts.length === 0 ? (
-              <p className="empty-state">No drafts saved yet. Start an estimate to create one.</p>
-            ) : (
-              <div className="table-wrapper table-wrapper--no-x">
-                <table className="kb-table kb-table--compact resizable-table">
-                  <thead>
-                    <tr>
-                      <ResizableTh resize={kbResize} index={0} className="kb-table__col-filename">Name</ResizableTh>
-                      <ResizableTh resize={kbResize} index={1} className="kb-table__col-date">Last Updated</ResizableTh>
-                      <ResizableTh resize={kbResize} index={2}>Step</ResizableTh>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {drafts.map((draft) => {
-                      const isSelected = selectedDraftId === draft.id;
-                      return (
-                        <tr
-                          key={draft.id}
-                          onClick={() => setSelectedDraftId(draft.id)}
-                          className={`kb-table__row ${isSelected ? "is-active" : ""}`}
-                          style={isSelected ? { backgroundColor: "rgba(76,110,245,0.08)" } : undefined}
-                        >
-                          <td className="kb-table__filename">{renderCell(draft.name)}</td>
-                          <td className="kb-table__date">{renderCell(new Date(draft.updatedAt).toLocaleString())}</td>
-                          <td>{renderCell(draft.step)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="panel__footer" style={{ justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                className="btn-match"
-                onClick={handleContinueDraft}
-                disabled={!selectedDraftId || loadingDraft}
-              >
-                {loadingDraft ? "Opening…" : "Continue"}
-              </button>
-            </div>
-          </section>
-        )}
-
-        {activePage === "new-estimate" && activeEstimateStep === "review" && (
-          <section id="review" className="panel">
-            <div className="panel__header">
-              <div>
-                <h2 className="review-title">Review Extraction</h2>
-              </div>
-              <div className="upload-actions">
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => setMarkdownModalOpen(true)}
-                  disabled={!hasDrawingMarkdown}
-                  title={hasDrawingMarkdown ? "Open Gemini Markdown" : "No Gemini markdown available"}
-                >
-                  Review Markdown
-                </button>
-                <button
-                  type="button"
-                  className="btn-match"
-                  onClick={handleProceedFromReview}
-                  disabled={boqCompareLoading || boqEnrichLoading}
-                >
-                  {boqEnrichLoading
-                    ? "Completing BOQ…"
-                    : hasDrawingData && hasBoqData
-                      ? "Compare"
-                      : "Finalize items"}
-                </button>
-              </div>
-            </div>
-            <div className="review-grid">
-              {hasDrawingData && (
-                <div className="review-block">
-                  <p className="eyebrow">Extracted Items from Drawings</p>
-                  <div className="table-toolbar">
-                    <span className="table-count">Selected {drawingSelectedCount} / {filteredDrawingReviewRows.length}</span>
-                    <div className="table-toolbar__actions" style={{ gap: "0.5rem" }}>
-                      <input
-                        className="form-input form-input--table"
-                        placeholder="Search description…"
-                        value={drawingSearch}
-                        onChange={(e) => setDrawingSearch(e.target.value)}
-                        style={{ width: "240px" }}
-                      />
-                      <button type="button" className="btn-ghost" onClick={() => setAllDrawingSelection(true)}>Check all</button>
-                      <button type="button" className="btn-ghost" onClick={() => setAllDrawingSelection(false)}>Uncheck all</button>
-                    </div>
-                  </div>
-                  <div className="table-wrapper">
-                    <table className="matches-table resizable-table">
-                      <thead>
-                        <tr>
-                          <th className="checkbox-col"></th>
-                          <th>No.</th>
-                          <th className="col--description">Description</th>
-                          <th className="col--finishes">Finishes</th>
-                          <th className="col--dimensions">Dimensions</th>
-                          <th className="col--qty">Quantity</th>
-                          <th className="col--uom">UOM</th>
-                        </tr>
-                      </thead>
-                      {drawingSections.map(section => (
-                        <tbody key={section.code || section.title}>
-                          <tr className="matches-table__section-row">
-                            <td colSpan={7} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
-                              {section.title} {section.code && `(${section.code})`} — {section.rows.length ? `${section.rows.length} item(s)` : "No items"}
-                            </td>
-                          </tr>
-                          {section.rows.length ? (
-                            section.rows.map(({ item, fileIdx, itemIdx, key }) => {
-                              const isSelected = !!selectedDrawingRows[key];
-                              const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
-                                const target = event.target as HTMLElement;
-                                if (target.closest("input, textarea, button, select")) return;
-                                setSelectedDrawingRows(prev => ({ ...prev, [key]: !prev[key] }));
-                              };
-                              const displayNumber = item.item_no || item.item_number || item.section_code || section.code || "—";
-                              return (
-                                <tr
-                                  key={key}
-                                  className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
-                                  onClick={handleRowClick}
-                                >
-                                  <td className="checkbox-col">
-                                    <input
-                                      type="checkbox"
-                                      checked={isSelected}
-                                      onChange={(e) => {
-                                        e.stopPropagation();
-                                        const checked = e.target.checked;
-                                        setSelectedDrawingRows(prev => ({ ...prev, [key]: checked }));
-                                      }}
-                                    />
-                                  </td>
-                                  <td className="finalize-col finalize-col--number">
-                                    <span className="cell-text" title={displayNumber}>{displayNumber}</span>
-                                  </td>
-                                  <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.description || item.full_description || ""}>
-                                    <textarea
-                                      className="form-input form-input--table finalize-textarea"
-                                      value={item.description || item.full_description || ""}
-                                      onChange={(e) => {
-                                        e.stopPropagation();
-                                        updateDrawingItemField(fileIdx, itemIdx, "description", e.target.value);
-                                      }}
-                                      placeholder="Description"
-                                      rows={1}
-                                    />
-                                  </td>
-                                  <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.finishes || ""}>
-                                    <input
-                                      className="form-input form-input--table"
-                                      value={item.finishes || ""}
-                                      onChange={(e) => {
-                                        e.stopPropagation();
-                                        updateDrawingItemField(fileIdx, itemIdx, "finishes", e.target.value);
-                                      }}
-                                      placeholder="Finishes"
-                                    />
-                                  </td>
-                                  <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.dimensions || item.size || ""}>
-                                    <input
-                                      className="form-input form-input--table"
-                                      value={item.dimensions || item.size || ""}
-                                      onChange={(e) => {
-                                        e.stopPropagation();
-                                        updateDrawingItemField(fileIdx, itemIdx, "dimensions", e.target.value);
-                                        updateDrawingItemField(fileIdx, itemIdx, "size", e.target.value);
-                                      }}
-                                      placeholder="Dimensions"
-                                    />
-                                  </td>
-                                  <td className="finalize-col finalize-col--qty">
-                                    <input
-                                      className="form-input form-input--table"
-                                      value={item.quantity || ""}
-                                      onChange={(e) => {
-                                        e.stopPropagation();
-                                        updateDrawingItemField(fileIdx, itemIdx, "quantity", e.target.value);
-                                      }}
-                                      placeholder="Qty"
-                                    />
-                                  </td>
-                                  <td className="finalize-col finalize-col--unit">
-                                    <input
-                                      className="form-input form-input--table"
-                                      value={item.unit || ""}
-                                      onChange={(e) => {
-                                        e.stopPropagation();
-                                        updateDrawingItemField(fileIdx, itemIdx, "unit", e.target.value);
-                                      }}
-                                      placeholder="UOM"
-                                    />
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          ) : (
-                            <tr>
-                              <td colSpan={7} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
-                                No drawing items detected in this section.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      ))}
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {hasBoqData && (
-                <div className="review-block">
-                  <p className="eyebrow">Extracted BOQ Items</p>
-                  <div className="table-toolbar">
-                    <span className="table-count">Selected {boqSelectedCount} / {filteredBoqReviewRows.length}</span>
-                    <div className="table-toolbar__actions" style={{ gap: "0.5rem" }}>
-                      <input
-                        className="form-input form-input--table"
-                        placeholder="Search description…"
-                        value={boqSearch}
-                        onChange={(e) => setBoqSearch(e.target.value)}
-                        style={{ width: "240px" }}
-                      />
-                      <button type="button" className="btn-ghost" onClick={() => setAllBoqSelection(true)}>Check all</button>
-                      <button type="button" className="btn-ghost" onClick={() => setAllBoqSelection(false)}>Uncheck all</button>
-                    </div>
-                  </div>
-                  <div className="table-wrapper table-wrapper--no-x">
-                    <table className="matches-table resizable-table">
-                      <thead>
-                        <tr>
-                          <th className="checkbox-col"></th>
-                          <th className="col--description">No.</th>
-                          <th className="col--description">Description</th>
-                          <th className="col--finishes">Finishes</th>
-                          <th className="col--dimensions">Dimensions</th>
-                          <th className="col--qty">Quantity</th>
-                          <th className="col--uom">UOM</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredBoqReviewRows.length ? (
-                          filteredBoqReviewRows.map(({ item, itemIdx, key }) => {
-                            const isSelected = !!selectedBoqRows[key];
-                            const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
-                              const target = event.target as HTMLElement;
-                              if (target.closest("input, textarea, button, select")) return;
-                              setSelectedBoqRows(prev => ({ ...prev, [key]: !prev[key] }));
-                            };
-                            const displayNumber = item.item_no || item.item_number || "—";
-                            return (
-                              <tr
-                                key={key}
-                                className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
-                                onClick={handleRowClick}
-                              >
-                                <td className="checkbox-col">
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      const checked = e.target.checked;
-                                      setSelectedBoqRows(prev => ({ ...prev, [key]: checked }));
-                                    }}
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--number">
-                                  <span className="cell-text" title={displayNumber}>{displayNumber}</span>
-                                </td>
-                                <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.description || item.full_description || ""}>
-                                  <textarea
-                                    className="form-input form-input--table finalize-textarea"
-                                    value={item.description || item.full_description || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateBoqItemField(itemIdx, "description", e.target.value);
-                                    }}
-                                    placeholder="Description"
-                                    rows={1}
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.finishes || ""}>
-                                  <input
-                                    className="form-input form-input--table"
-                                    value={item.finishes || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateBoqItemField(itemIdx, "finishes", e.target.value);
-                                    }}
-                                    placeholder="Finishes"
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.dimensions || item.size || ""}>
-                                  <input
-                                    className="form-input form-input--table"
-                                    value={item.dimensions || item.size || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateBoqItemField(itemIdx, "dimensions", e.target.value);
-                                      updateBoqItemField(itemIdx, "size", e.target.value);
-                                    }}
-                                    placeholder="Dimensions"
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--qty">
-                                  <input
-                                    className="form-input form-input--table"
-                                    value={item.quantity || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateBoqItemField(itemIdx, "quantity", e.target.value);
-                                    }}
-                                    placeholder="Qty"
-                                  />
-                                </td>
-                                <td className="finalize-col finalize-col--unit">
-                                  <input
-                                    className="form-input form-input--table"
-                                    value={item.unit || ""}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateBoqItemField(itemIdx, "unit", e.target.value);
-                                    }}
-                                    placeholder="UOM"
-                                  />
-                                </td>
-                              </tr>
-                            );
-                          })
-                        ) : (
-                          <tr>
-                            <td colSpan={6} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
-                              No BOQ items match this description search.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {activePage === "new-estimate" && activeEstimateStep === "compare" && (
-          <section id="compare" className="panel">
-            <div className="panel__header">
-              <div>
-                <p className="eyebrow">Comparison</p>
-                <h2>Press on a row to include, or choose the source from the dropdown</h2>
-              </div>
-            </div>
-            {boqResults.comparisons.length > 0 ? (
-              <>
-                <div className="table-wrapper table-wrapper--no-x" style={{ marginTop: "1.25rem" }}>
-                  <table className="matches-table resizable-table compare-table">
-                    <thead>
-                      <tr>
-                        <th />
-                        <ResizableTh resize={comparisonResize} index={0}>BOQ item</ResizableTh>
-                        <ResizableTh resize={comparisonResize} index={1}>Drawing item</ResizableTh>
-                        <ResizableTh resize={comparisonResize} index={2} className="compare-action-col">Action</ResizableTh>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {boqResults.comparisons.map((row, idx) => (
-                        <tr key={`combined-compare-${idx}`} className={getComparisonClass(row.status)}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={!!comparisonChecked[idx]}
-                              onChange={(e) => handleComparisonCheck(idx, e.target.checked)}
-                            />
-                          </td>
-                          <td
-                            className={`selectable-cell ${row.boq_item ? "is-clickable" : "is-disabled"} ${comparisonSelections[idx] === "boq" ? "is-selected" : ""
-                              }`}
-                            onClick={() => handleComparisonCellSelect(idx, "boq", !!row.boq_item)}
-                          >
-                            {renderCell(
-                              row.boq_item
-                                ? `${row.boq_item.description || "—"} (${row.boq_item.quantity || "?"} ${row.boq_item.unit || ""}${row.boq_item.size ? `, ${row.boq_item.size}` : ""})`
-                                : "—"
-                            )}
-                          </td>
-                          <td
-                            className={`selectable-cell ${row.drawing_item ? "is-clickable" : "is-disabled"} ${comparisonSelections[idx] === "drawing" ? "is-selected" : ""
-                              }`}
-                            onClick={() => handleComparisonCellSelect(idx, "drawing", !!row.drawing_item)}
-                          >
-                            {renderCell(
-                              row.drawing_item
-                                ? `${row.drawing_item.description || "—"} (${row.drawing_item.quantity || "?"} ${row.drawing_item.unit || ""}${row.drawing_item.size ? `, ${row.drawing_item.size}` : ""})`
-                                : "—"
-                            )}
-                          </td>
-                          <td className="compare-action-col">
-                            <select
-                              className="form-input form-input--table"
-                              value={comparisonSelections[idx] || ""}
-                              onChange={(e) => handleComparisonSelect(idx, e.target.value as "drawing" | "boq")}
-                            >
-                              <option value="">Choose source</option>
-                              {row.boq_item && <option value="boq">Select from BOQ</option>}
-                              {row.drawing_item && <option value="drawing">Select from Drawings</option>}
-                            </select>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="table-actions" style={{ paddingTop: "0.75rem" }}>
-                  <button
-                    type="button"
-                    className={`btn-match ${hasAnyComparisonChecked && hasMissingComparisonSelection ? "is-disabled" : ""}`}
-                    onClick={() => {
-                      if (hasAnyComparisonChecked && hasMissingComparisonSelection) {
-                        setFeedback("Choose a source (BOQ or Drawing) for each selected row.");
-                        setTimeout(() => setFeedback(""), 3000);
-                        return;
-                      }
-                      const selections: Array<{ item: ExtractedItem; source: "drawing" | "boq" }> = [];
-                      let missingSource = false;
-                      boqResults.comparisons.forEach((row, idx) => {
-                        if (!comparisonChecked[idx]) return;
-                        const chosen = comparisonSelections[idx];
-                        if (chosen === "boq" && row.boq_item) {
-                          selections.push(buildFinalizeEntry(row.boq_item, "boq", row.drawing_item || undefined));
-                          return;
-                        }
-                        if (chosen === "drawing" && row.drawing_item) {
-                          selections.push(buildFinalizeEntry(row.drawing_item, "drawing", row.boq_item || undefined));
-                          return;
-                        }
-
-                        // Fallbacks when no selection provided
-                        if (row.status === "match_exact") {
-                          if (row.boq_item) {
-                            selections.push(buildFinalizeEntry(row.boq_item, "boq", row.drawing_item || undefined));
-                            return;
-                          }
-                          if (row.drawing_item) {
-                            selections.push(buildFinalizeEntry(row.drawing_item, "drawing", row.boq_item || undefined));
-                            return;
-                          }
-                        }
-
-                        missingSource = true;
-                      });
-                      if (missingSource) {
-                        setFeedback("Select source for all checked rows (unless they are auto-matched).");
-                        setTimeout(() => setFeedback(""), 3000);
-                        return;
-                      }
-                      setFinalizeItems(selections);
-                      setActiveEstimateStep("finalize");
+                  <span className="user-menu-username">{user?.username || "User"}</span>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    style={{
+                      transform: isUserMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
+                      transition: "transform 0.2s ease"
                     }}
                   >
-                    Finalize
-                  </button>
-                </div>
-              </>
-            ) : (
-              <p className="empty-state">No comparisons yet.</p>
-            )}
-          </section>
-        )}
-
-        {activePage === "new-estimate" && activeEstimateStep === "finalize" && (
-          <section id="finalize" className="panel">
-            <EditableItemsTable
-              items={finalizeItems}
-              onChange={setFinalizeItems}
-              title=""
-              searchQuery={finalizeSearch}
-              onSearchChange={setFinalizeSearch}
-            />
-            <div className="table-actions" style={{ justifyContent: "space-between", gap: "0.75rem" }}>
-              <button type="button" className="btn-secondary" onClick={() => setFinalizeItems(prev => [...prev, { item: {}, source: "manual" }])}>
-                + Add row
-              </button>
-              <button type="button" className="btn-match btn-outline" onClick={handleGoToPricing}>
-                Go to Pricing
-              </button>
-            </div>
-          </section>
-        )}
-
-        {activePage === "new-estimate" && activeEstimateStep === "pricing" && (
-          <section id="pricing" className="panel">
-            <div className="panel__header">
-              <div>
-                <p className="eyebrow">Pricing</p>
-              </div>
-            </div>
-            <div className="pricing-accordion">
-              {PRICING_SECTIONS.map(section => {
-                const isOpen = activePricingSection === section.id;
-                return (
-                  <div key={section.id} className={`pricing-accordion__card ${isOpen ? "is-open" : ""}`}>
+                    <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                {isUserMenuOpen && (
+                  <div className="user-menu-dropdown">
+                    <div className="user-menu-header">
+                      <div className="user-avatar user-avatar--large">
+                        <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                          <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
+                          <path d="M4 17c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                        </svg>
+                      </div>
+                      <div className="user-menu-info">
+                        <p className="user-menu-name">{user?.username || "User"}</p>
+                        <p className="user-menu-email">{user?.email || ""}</p>
+                      </div>
+                    </div>
+                    <div className="user-menu-divider"></div>
                     <button
                       type="button"
-                      className="pricing-accordion__header"
-                      onClick={() => setActivePricingSection(isOpen ? null : section.id)}
-                      aria-pressed={isOpen}
+                      className="user-menu-item user-menu-item--danger"
+                      onClick={async () => {
+                        setIsUserMenuOpen(false);
+                        await logout();
+                      }}
                     >
-                      <span className="pricing-accordion__label">{section.label}</span>
-                      <span className={`pricing-accordion__chevron ${isOpen ? "is-open" : ""}`} aria-hidden="true">▾</span>
+                      <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                        <path d="M6 2H4a2 2 0 00-2 2v12a2 2 0 002 2h2M12 2h2a2 2 0 012 2v12a2 2 0 01-2 2h-2M6 9h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <span>Logout</span>
                     </button>
+                  </div>
+                )}
+              </div>
+            </header>
 
-                    {isOpen && (
-                      <div className="pricing-accordion__panel">
-                        {section.id === "items" ? (
-                          pricingSelections.length === 0 ? (
-                            <p className="empty-state" style={{ margin: 0 }}>No items available for pricing yet.</p>
+            {activePage === "new-estimate" && (
+              <div className="stepper" role="navigation" aria-label="Estimate workflow">
+                {ESTIMATE_STEPS.map((step, idx) => {
+                  const status = getStepStatus(step.id);
+                  const isClickable = canNavigateToStep(step.id);
+                  return (
+                    <div className="stepper__segment" key={step.id}>
+                      <button
+                        type="button"
+                        className={`stepper__item stepper__item--${status} ${isClickable ? "is-clickable" : "is-disabled"}`}
+                        onClick={() => handleStepChange(step.id)}
+                        disabled={!isClickable}
+                        aria-current={status === "current" ? "step" : undefined}
+                      >
+                        <span className={`stepper__circle ${status === "complete" ? "is-complete" : ""}`}>
+                          {status === "complete" ? (
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                              <path d="M4 8l3 3 5-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
                           ) : (
-                            <>
-                              <div className="table-toolbar" style={{ justifyContent: "flex-end", margin: "0.25rem 0 0.5rem" }}>
-                                <input
-                                  className="form-input form-input--table"
-                                  placeholder="Search description…"
-                                  value={pricingSearch}
-                                  onChange={(e) => setPricingSearch(e.target.value)}
-                                  style={{ width: "260px" }}
-                                />
-                              </div>
-                              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
-                                <table className="matches-table resizable-table pricing-table">
-                                  <thead>
-                                    <tr>
-                                      <ResizableTh resize={pricingResize} index={0}>Id</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={1}>Item</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={2}>Description</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={3}>Finishes</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={4}>Dimensions</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={5}>Qty</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={6}>Unit</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={7}>Unit Price</ResizableTh>
-                                      <ResizableTh resize={pricingResize} index={8}>Total Price</ResizableTh>
+                            idx + 1
+                          )}
+                        </span>
+                        <span className="stepper__meta">
+                          <span className="stepper__label">{step.label}</span>
+                          <span className="stepper__desc">{step.description}</span>
+                        </span>
+                      </button>
+                      {idx < ESTIMATE_STEPS.length - 1 && (
+                        <div
+                          className={`stepper__connector ${STEP_ORDER[step.id] < STEP_ORDER[activeEstimateStep] ? "is-complete" : ""}`}
+                          aria-hidden="true"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={isPrepareStep ? { flex: 1, minHeight: 0, overflow: "hidden" } : undefined}>
+
+              {activePage === "drawing-prompt" && (
+                <section id="drawing-prompt" className="panel">
+                  <div className="panel__header">
+                    <div>
+                      <p className="eyebrow">OpenAI</p>
+                      <h2>Drawing Extraction Prompt</h2>
+                      <p className="eyebrow" style={{ opacity: 0.7, marginTop: "0.35rem" }}>
+                        Used when extracting items from drawings or BOQ images.
+                      </p>
+                    </div>
+                    <div className="upload-actions" style={{ gap: "0.5rem", flexDirection: "column", alignItems: "flex-end" }}>
+                      <span className="status" style={{ fontSize: "0.9rem" }}>
+                        {drawingPromptSaving
+                          ? "Saving..."
+                          : drawingPromptDirty
+                            ? "Unsaved changes"
+                            : drawingPromptUpdatedAt
+                              ? `Last updated ${new Date(drawingPromptUpdatedAt).toLocaleString()}`
+                              : "Using default prompt"}
+                      </span>
+                      <div style={{ display: "flex", gap: "0.5rem" }}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => loadDrawingPrompt()}
+                          disabled={drawingPromptLoading || drawingPromptSaving}
+                        >
+                          Reload
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-match"
+                          onClick={handleDrawingPromptSave}
+                          disabled={drawingPromptLoading || drawingPromptSaving || !drawingPromptDirty}
+                        >
+                          {drawingPromptSaving ? "Saving…" : "Save prompt"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="panel__body">
+                    {drawingPromptLoading ? (
+                      <div className="loading-container">
+                        <div className="loading-spinner">
+                          <svg width="48" height="48" viewBox="0 0 48 48" className="spinner">
+                            <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="100" strokeDashoffset="25" strokeLinecap="round" />
+                          </svg>
+                        </div>
+                        <p className="loading-text">Loading prompt...</p>
+                      </div>
+                    ) : (
+                      <>
+                        {drawingPromptError && (
+                          <div className="error-text" style={{ color: "#ffb6b6", marginBottom: "0.75rem" }}>
+                            {drawingPromptError}
+                          </div>
+                        )}
+                        <div className="form-group">
+                          <label htmlFor="drawingPrompt">OpenAI prompt</label>
+                          <textarea
+                            id="drawingPrompt"
+                            className="form-input"
+                            style={{ minHeight: "360px", fontFamily: "monospace", lineHeight: "1.4" }}
+                            value={drawingPrompt}
+                            onChange={(event) => {
+                              setDrawingPrompt(event.target.value);
+                              setDrawingPromptDirty(true);
+                            }}
+                            placeholder="Enter the prompt used to extract items from drawings"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {activePage === "drafts" && (
+                <section id="drafts" className="panel">
+                  <div className="panel__header">
+                    <div>
+                      <p className="eyebrow">Drafts</p>
+                      <h2>My Drafts</h2>
+                    </div>
+                    <div className="upload-actions" style={{ gap: "0.5rem" }}>
+                      <button type="button" onClick={() => refreshDrafts()} disabled={draftsLoading}>
+                        {draftsLoading ? "Refreshing…" : "Refresh"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {draftsLoading ? (
+                    <div className="loading-container">
+                      <div className="loading-spinner">
+                        <svg width="48" height="48" viewBox="0 0 48 48" className="spinner">
+                          <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="100" strokeDashoffset="25" strokeLinecap="round" />
+                        </svg>
+                      </div>
+                      <p className="loading-text">Loading drafts...</p>
+                    </div>
+                  ) : drafts.length === 0 ? (
+                    <p className="empty-state">No drafts saved yet. Start an estimate to create one.</p>
+                  ) : (
+                    <div className="table-wrapper table-wrapper--no-x">
+                      <table className="kb-table kb-table--compact resizable-table">
+                        <thead>
+                          <tr>
+                            <ResizableTh resize={kbResize} index={0} className="kb-table__col-filename">Name</ResizableTh>
+                            <ResizableTh resize={kbResize} index={1} className="kb-table__col-date">Last Updated</ResizableTh>
+                            <ResizableTh resize={kbResize} index={2}>Step</ResizableTh>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {drafts.map((draft) => {
+                            const isSelected = selectedDraftId === draft.id;
+                            return (
+                              <tr
+                                key={draft.id}
+                                onClick={() => setSelectedDraftId(draft.id)}
+                                className={`kb-table__row ${isSelected ? "is-active" : ""}`}
+                                style={isSelected ? { backgroundColor: "rgba(76,110,245,0.08)" } : undefined}
+                              >
+                                <td className="kb-table__filename">{renderCell(draft.name)}</td>
+                                <td className="kb-table__date">{renderCell(new Date(draft.updatedAt).toLocaleString())}</td>
+                                <td>{renderCell(draft.step)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div className="panel__footer" style={{ justifyContent: "flex-end" }}>
+                    <button
+                      type="button"
+                      className="btn-match"
+                      onClick={handleContinueDraft}
+                      disabled={!selectedDraftId || loadingDraft}
+                    >
+                      {loadingDraft ? "Opening…" : "Continue"}
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {activePage === "new-estimate" && activeEstimateStep === "review" && (
+                <section id="review" className="panel">
+                  <div className="panel__header">
+                    <div>
+                      <h2 className="review-title">Review Extraction</h2>
+                    </div>
+                    <div className="upload-actions">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => {
+                          const file = extractedFiles[markdownFileIdx];
+                          const fileName = file?.fileName || "";
+                          const raw = (file as any)?.geminiDebug?.landingAi?.raw ?? null;
+                          const pdf = drawingPdfPreviews.find((p) => p.fileName === fileName) ?? drawingPdfPreviews[0];
+                          if (!fileName || !pdf?.url) {
+                            setFeedback("Select a PDF drawing file to open manual parse.");
+                            setTimeout(() => setFeedback(""), 3500);
+                            return;
+                          }
+                          if (!raw) {
+                            setFeedback("LandingAI data is not available for this file (check LANDINGAI_API_KEY).");
+                            setTimeout(() => setFeedback(""), 4500);
+                            return;
+                          }
+                          setLandingAiReviewData({ pdfUrl: pdf.url, fileName, raw });
+                          setActivePage("landingai-review");
+                        }}
+                        disabled={!hasDrawingMarkdown || !drawingPdfPreviews.length}
+                        title={!drawingPdfPreviews.length ? "Upload a PDF drawing to enable manual parse" : "Open PDF + LandingAI markdown with grounding boxes"}
+                      >
+                        Manual parse
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-match"
+                        onClick={handleProceedFromReview}
+                        disabled={boqCompareLoading || boqEnrichLoading}
+                      >
+                        {boqEnrichLoading
+                          ? "Completing BOQ…"
+                          : hasDrawingData && hasBoqData
+                            ? "Compare"
+                            : "Finalize items"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="review-grid">
+                    {hasDrawingData && (
+                      <div className="review-block">
+                        <p className="eyebrow">Extracted Items from Drawings</p>
+                        <div className="table-toolbar">
+                          <span className="table-count">Selected {drawingSelectedCount} / {filteredDrawingReviewRows.length}</span>
+                          <div className="table-toolbar__actions" style={{ gap: "0.5rem" }}>
+                            <input
+                              className="form-input form-input--table"
+                              placeholder="Search description…"
+                              value={drawingSearch}
+                              onChange={(e) => setDrawingSearch(e.target.value)}
+                              style={{ width: "240px" }}
+                            />
+                            <button type="button" className="btn-ghost" onClick={() => setAllDrawingSelection(true)}>Check all</button>
+                            <button type="button" className="btn-ghost" onClick={() => setAllDrawingSelection(false)}>Uncheck all</button>
+                          </div>
+                        </div>
+                        <div className="table-wrapper">
+                          <table className="matches-table resizable-table">
+                            <thead>
+                              <tr>
+                                <th className="checkbox-col"></th>
+                                <th>No.</th>
+                                <th className="col--description">Description</th>
+                                <th className="col--finishes">Finishes</th>
+                                <th className="col--dimensions">Dimensions</th>
+                                <th className="col--qty">Quantity</th>
+                                <th className="col--uom">UOM</th>
+                              </tr>
+                            </thead>
+                            {drawingSections.map(section => (
+                              <tbody key={section.code || section.title}>
+                                <tr className="matches-table__section-row">
+                                  <td colSpan={7} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
+                                    {section.title} {section.code && `(${section.code})`} — {section.rows.length ? `${section.rows.length} item(s)` : "No items"}
+                                  </td>
+                                </tr>
+                                {section.rows.length ? (
+                                  section.rows.map(({ item, fileIdx, itemIdx, key }) => {
+                                    const isSelected = !!selectedDrawingRows[key];
+                                    const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+                                      const target = event.target as HTMLElement;
+                                      if (target.closest("input, textarea, button, select")) return;
+                                      setSelectedDrawingRows(prev => ({ ...prev, [key]: !prev[key] }));
+                                    };
+                                    const displayNumber = item.item_no || item.item_number || item.section_code || section.code || "—";
+                                    return (
+                                      <tr
+                                        key={key}
+                                        className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
+                                        onClick={handleRowClick}
+                                      >
+                                        <td className="checkbox-col">
+                                          <input
+                                            type="checkbox"
+                                            checked={isSelected}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              const checked = e.target.checked;
+                                              setSelectedDrawingRows(prev => ({ ...prev, [key]: checked }));
+                                            }}
+                                          />
+                                        </td>
+                                        <td className="finalize-col finalize-col--number">
+                                          <span className="cell-text" title={displayNumber}>{displayNumber}</span>
+                                        </td>
+                                        <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.description || item.full_description || ""}>
+                                          <textarea
+                                            className="form-input form-input--table finalize-textarea"
+                                            value={item.description || item.full_description || ""}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              updateDrawingItemField(fileIdx, itemIdx, "description", e.target.value);
+                                            }}
+                                            placeholder="Description"
+                                            rows={1}
+                                          />
+                                        </td>
+                                        <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.finishes || ""}>
+                                          <input
+                                            className="form-input form-input--table"
+                                            value={item.finishes || ""}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              updateDrawingItemField(fileIdx, itemIdx, "finishes", e.target.value);
+                                            }}
+                                            placeholder="Finishes"
+                                          />
+                                        </td>
+                                        <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.dimensions || item.size || ""}>
+                                          <input
+                                            className="form-input form-input--table"
+                                            value={item.dimensions || item.size || ""}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              updateDrawingItemField(fileIdx, itemIdx, "dimensions", e.target.value);
+                                              updateDrawingItemField(fileIdx, itemIdx, "size", e.target.value);
+                                            }}
+                                            placeholder="Dimensions"
+                                          />
+                                        </td>
+                                        <td className="finalize-col finalize-col--qty">
+                                          <input
+                                            className="form-input form-input--table"
+                                            value={item.quantity || ""}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              updateDrawingItemField(fileIdx, itemIdx, "quantity", e.target.value);
+                                            }}
+                                            placeholder="Qty"
+                                          />
+                                        </td>
+                                        <td className="finalize-col finalize-col--unit">
+                                          <input
+                                            className="form-input form-input--table"
+                                            value={item.unit || ""}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              updateDrawingItemField(fileIdx, itemIdx, "unit", e.target.value);
+                                            }}
+                                            placeholder="UOM"
+                                          />
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                ) : (
+                                  <tr>
+                                    <td colSpan={7} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                                      No drawing items detected in this section.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            ))}
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {hasBoqData && (
+                      <div className="review-block">
+                        <p className="eyebrow">Extracted BOQ Items</p>
+                        <div className="table-toolbar">
+                          <span className="table-count">Selected {boqSelectedCount} / {filteredBoqReviewRows.length}</span>
+                          <div className="table-toolbar__actions" style={{ gap: "0.5rem" }}>
+                            <input
+                              className="form-input form-input--table"
+                              placeholder="Search description…"
+                              value={boqSearch}
+                              onChange={(e) => setBoqSearch(e.target.value)}
+                              style={{ width: "240px" }}
+                            />
+                            <button type="button" className="btn-ghost" onClick={() => setAllBoqSelection(true)}>Check all</button>
+                            <button type="button" className="btn-ghost" onClick={() => setAllBoqSelection(false)}>Uncheck all</button>
+                          </div>
+                        </div>
+                        <div className="table-wrapper table-wrapper--no-x">
+                          <table className="matches-table resizable-table">
+                            <thead>
+                              <tr>
+                                <th className="checkbox-col"></th>
+                                <th className="col--description">No.</th>
+                                <th className="col--description">Description</th>
+                                <th className="col--finishes">Finishes</th>
+                                <th className="col--dimensions">Dimensions</th>
+                                <th className="col--qty">Quantity</th>
+                                <th className="col--uom">UOM</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredBoqReviewRows.length ? (
+                                filteredBoqReviewRows.map(({ item, itemIdx, key }) => {
+                                  const isSelected = !!selectedBoqRows[key];
+                                  const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+                                    const target = event.target as HTMLElement;
+                                    if (target.closest("input, textarea, button, select")) return;
+                                    setSelectedBoqRows(prev => ({ ...prev, [key]: !prev[key] }));
+                                  };
+                                  const displayNumber = item.item_no || item.item_number || "—";
+                                  return (
+                                    <tr
+                                      key={key}
+                                      className={`matches-table__row ${isSelected ? "is-selected" : ""}`}
+                                      onClick={handleRowClick}
+                                    >
+                                      <td className="checkbox-col">
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            const checked = e.target.checked;
+                                            setSelectedBoqRows(prev => ({ ...prev, [key]: checked }));
+                                          }}
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--number">
+                                        <span className="cell-text" title={displayNumber}>{displayNumber}</span>
+                                      </td>
+                                      <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.description || item.full_description || ""}>
+                                        <textarea
+                                          className="form-input form-input--table finalize-textarea"
+                                          value={item.description || item.full_description || ""}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            updateBoqItemField(itemIdx, "description", e.target.value);
+                                          }}
+                                          placeholder="Description"
+                                          rows={1}
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.finishes || ""}>
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={item.finishes || ""}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            updateBoqItemField(itemIdx, "finishes", e.target.value);
+                                          }}
+                                          placeholder="Finishes"
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.dimensions || item.size || ""}>
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={item.dimensions || item.size || ""}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            updateBoqItemField(itemIdx, "dimensions", e.target.value);
+                                            updateBoqItemField(itemIdx, "size", e.target.value);
+                                          }}
+                                          placeholder="Dimensions"
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--qty">
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={item.quantity || ""}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            updateBoqItemField(itemIdx, "quantity", e.target.value);
+                                          }}
+                                          placeholder="Qty"
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--unit">
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={item.unit || ""}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            updateBoqItemField(itemIdx, "unit", e.target.value);
+                                          }}
+                                          placeholder="UOM"
+                                        />
+                                      </td>
                                     </tr>
-                                  </thead>
-                                  <tbody>
-                                    {filteredPricingSelections.length ? (
-                                      filteredPricingSelections.map(({ sel, idx }) => {
-                                        const rowIdx = idx;
-                                        const matchOptions = pricingMatchOptions[rowIdx] || [];
-                                        return (
-                                          <tr key={`pricing-${rowIdx}`} className="matches-table__row">
-                                            <td>{rowIdx + 1}</td>
-                                            <td>
-                                              {renderCell(sel.item.item_type)}
-                                            </td>
-                                            <td>
-                                              <div
-                                                className="pricing-desc-cell"
-                                                ref={(node) => {
-                                                  pricingDropdownRefs.current[rowIdx] = node;
-                                                }}
-                                                onBlurCapture={(e) => {
-                                                  const nextTarget = e.relatedTarget as Node | null;
-                                                  if (!nextTarget || !e.currentTarget.contains(nextTarget)) {
-                                                    closeMatchDropdown(rowIdx);
-                                                  }
-                                                }}
-                                                onMouseLeave={() => closeMatchDropdown(rowIdx)}
-                                              >
-                                                <span className="pricing-desc-text">
-                                                  {renderCell(sel.item.description || sel.item.full_description)}
-                                                </span>
-                                                <>
-                                                  <button
-                                                    type="button"
-                                                    className="pricing-match-trigger"
-                                                    aria-label="Select pricing option"
-                                                    aria-expanded={pricingDropdownOpen[rowIdx] || false}
-                                                    ref={(node) => {
-                                                      pricingTriggerRefs.current[rowIdx] = node;
-                                                    }}
-                                                    onClick={() => openMatchDropdown(rowIdx)}
-                                                  >
-                                                    ▾
-                                                  </button>
-                                                  {pricingDropdownOpen[rowIdx] && (
+                                  );
+                                })
+                              ) : (
+                                <tr>
+                                  <td colSpan={6} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                                    No BOQ items match this description search.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {activePage === "new-estimate" && activeEstimateStep === "compare" && (
+                <section id="compare" className="panel">
+                  <div className="panel__header">
+                    <div>
+                      <p className="eyebrow">Comparison</p>
+                      <h2>Press on a row to include, or choose the source from the dropdown</h2>
+                    </div>
+                  </div>
+                  {boqResults.comparisons.length > 0 ? (
+                    <>
+                      <div className="table-wrapper table-wrapper--no-x" style={{ marginTop: "1.25rem" }}>
+                        <table className="matches-table resizable-table compare-table">
+                          <thead>
+                            <tr>
+                              <th />
+                              <ResizableTh resize={comparisonResize} index={0}>BOQ item</ResizableTh>
+                              <ResizableTh resize={comparisonResize} index={1}>Drawing item</ResizableTh>
+                              <ResizableTh resize={comparisonResize} index={2} className="compare-action-col">Action</ResizableTh>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {boqResults.comparisons.map((row, idx) => (
+                              <tr key={`combined-compare-${idx}`} className={getComparisonClass(row.status)}>
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={!!comparisonChecked[idx]}
+                                    onChange={(e) => handleComparisonCheck(idx, e.target.checked)}
+                                  />
+                                </td>
+                                <td
+                                  className={`selectable-cell ${row.boq_item ? "is-clickable" : "is-disabled"} ${comparisonSelections[idx] === "boq" ? "is-selected" : ""
+                                    }`}
+                                  onClick={() => handleComparisonCellSelect(idx, "boq", !!row.boq_item)}
+                                >
+                                  {renderCell(
+                                    row.boq_item
+                                      ? `${row.boq_item.description || "—"} (${row.boq_item.quantity || "?"} ${row.boq_item.unit || ""}${row.boq_item.size ? `, ${row.boq_item.size}` : ""})`
+                                      : "—"
+                                  )}
+                                </td>
+                                <td
+                                  className={`selectable-cell ${row.drawing_item ? "is-clickable" : "is-disabled"} ${comparisonSelections[idx] === "drawing" ? "is-selected" : ""
+                                    }`}
+                                  onClick={() => handleComparisonCellSelect(idx, "drawing", !!row.drawing_item)}
+                                >
+                                  {renderCell(
+                                    row.drawing_item
+                                      ? `${row.drawing_item.description || "—"} (${row.drawing_item.quantity || "?"} ${row.drawing_item.unit || ""}${row.drawing_item.size ? `, ${row.drawing_item.size}` : ""})`
+                                      : "—"
+                                  )}
+                                </td>
+                                <td className="compare-action-col">
+                                  <select
+                                    className="form-input form-input--table"
+                                    value={comparisonSelections[idx] || ""}
+                                    onChange={(e) => handleComparisonSelect(idx, e.target.value as "drawing" | "boq")}
+                                  >
+                                    <option value="">Choose source</option>
+                                    {row.boq_item && <option value="boq">Select from BOQ</option>}
+                                    {row.drawing_item && <option value="drawing">Select from Drawings</option>}
+                                  </select>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="table-actions" style={{ paddingTop: "0.75rem" }}>
+                        <button
+                          type="button"
+                          className={`btn-match ${hasAnyComparisonChecked && hasMissingComparisonSelection ? "is-disabled" : ""}`}
+                          onClick={() => {
+                            if (hasAnyComparisonChecked && hasMissingComparisonSelection) {
+                              setFeedback("Choose a source (BOQ or Drawing) for each selected row.");
+                              setTimeout(() => setFeedback(""), 3000);
+                              return;
+                            }
+                            const selections: Array<{ item: ExtractedItem; source: "drawing" | "boq" }> = [];
+                            let missingSource = false;
+                            boqResults.comparisons.forEach((row, idx) => {
+                              if (!comparisonChecked[idx]) return;
+                              const chosen = comparisonSelections[idx];
+                              if (chosen === "boq" && row.boq_item) {
+                                selections.push(buildFinalizeEntry(row.boq_item, "boq", row.drawing_item || undefined));
+                                return;
+                              }
+                              if (chosen === "drawing" && row.drawing_item) {
+                                selections.push(buildFinalizeEntry(row.drawing_item, "drawing", row.boq_item || undefined));
+                                return;
+                              }
+
+                              // Fallbacks when no selection provided
+                              if (row.status === "match_exact") {
+                                if (row.boq_item) {
+                                  selections.push(buildFinalizeEntry(row.boq_item, "boq", row.drawing_item || undefined));
+                                  return;
+                                }
+                                if (row.drawing_item) {
+                                  selections.push(buildFinalizeEntry(row.drawing_item, "drawing", row.boq_item || undefined));
+                                  return;
+                                }
+                              }
+
+                              missingSource = true;
+                            });
+                            if (missingSource) {
+                              setFeedback("Select source for all checked rows (unless they are auto-matched).");
+                              setTimeout(() => setFeedback(""), 3000);
+                              return;
+                            }
+                            setFinalizeItems(selections);
+                            setActiveEstimateStep("finalize");
+                          }}
+                        >
+                          Finalize
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="empty-state">No comparisons yet.</p>
+                  )}
+                </section>
+              )}
+
+              {activePage === "new-estimate" && activeEstimateStep === "finalize" && (
+                <LandingAiReview
+                  pdfUrl={prepareLandingContext.pdfUrl}
+                  landingAiRaw={prepareLandingContext.raw}
+                  fileName={prepareLandingContext.fileName}
+                  selectedChunkId={prepareSelectedChunkId}
+                  onSelectedChunkIdChange={(id) => {
+                    prepareSelectionSourceRef.current = "pdf";
+                    setPrepareSelectedChunkId(id);
+                  }}
+                  headerLeft={null}
+                  headerCompact
+                  initialSplitPct={70}
+                  headerActions={
+                    <>
+                      <button
+                        type="button"
+                        className="btn-match btn-outline"
+                        onClick={handleGoToPricing}
+                        style={{ padding: "0.45rem 0.9rem", fontSize: "0.9rem", borderRadius: "0.5rem" }}
+                      >
+                        Go to Pricing
+                      </button>
+                    </>
+                  }
+                  rightPane={
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", minHeight: 0, height: "100%", overflow: "hidden" }}>
+                      {!prepareLandingContext.raw ? (
+                        <div style={{ color: "rgba(227,233,255,0.75)" }}>
+                          LandingAI data is not available for this file (check `LANDINGAI_API_KEY`). Items will still be shown, but PDF linking is disabled.
+                        </div>
+                      ) : null}
+
+                      <div
+                        className="table-wrapper"
+                        ref={prepareTableScrollRef}
+                        style={{ flex: 1, minHeight: 0, overflow: "auto", fontSize: "0.88rem" }}
+                      >
+                        <table className="matches-table resizable-table">
+                          <thead>
+                            <tr>
+                              <th>No.</th>
+                              <th className="col--description">Description</th>
+                              <th className="col--finishes">Finishes</th>
+                              <th className="col--dimensions">Dimensions</th>
+                              <th className="col--qty">Quantity</th>
+                              <th className="col--uom">UOM</th>
+                            </tr>
+                          </thead>
+                          {finalizeSectionsForPrepare.map((section) => (
+                            <tbody key={`prepare-${section.code || section.title}`}>
+                              <tr className="matches-table__section-row">
+                                <td colSpan={6} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
+                                    <span>
+                                      {section.title} {section.code && `(${section.code})`}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="btn-ghost"
+                                      style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", borderRadius: "0.45rem" }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        addFinalizeRowForSection(section.code);
+                                      }}
+                                    >
+                                      + Add row
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {section.rows.length ? (
+                                section.rows.map(({ entry, idx }) => {
+                                  const item = entry.item;
+                                  const linked = !!prepareSelectedChunkId && !!item.landing_ai_id && item.landing_ai_id === prepareSelectedChunkId;
+                                  const displayNumber = item.item_no || item.item_number || item.section_code || section.code || "—";
+                                  const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>) => {
+                                    const target = event.target as HTMLElement;
+                                    if (target.closest("input, textarea, button, select")) return;
+                                    if (item.landing_ai_id) {
+                                      prepareSelectionSourceRef.current = "table";
+                                      setPrepareSelectedChunkId(String(item.landing_ai_id));
+                                    }
+                                  };
+                                  const linkId = item.landing_ai_id ? String(item.landing_ai_id) : "";
+                                  return (
+                                    <tr
+                                      key={`prepare-row-${idx}`}
+                                      className={`matches-table__row ${linked ? "is-linked" : ""}`}
+                                      onClick={handleRowClick}
+                                      ref={(el) => {
+                                        if (!linkId) return;
+                                        prepareTableRowRefs.current[linkId] = el;
+                                      }}
+                                    >
+                                      <td className="finalize-col finalize-col--number">
+                                        <span className="cell-text" title={displayNumber}>{displayNumber}</span>
+                                      </td>
+                                      <td className="finalize-col finalize-col--description finalize-col--description-narrow" title={item.description || item.full_description || ""}>
+                                        <textarea
+                                          className="form-input form-input--table finalize-textarea"
+                                          value={item.description || item.full_description || ""}
+                                          onChange={(e) => updateFinalizeItemField(idx, "description", e.target.value)}
+                                          placeholder="Description"
+                                          rows={1}
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--finishes finalize-col--finishes-wide" title={item.finishes || ""}>
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={item.finishes || ""}
+                                          onChange={(e) => updateFinalizeItemField(idx, "finishes", e.target.value)}
+                                          placeholder="Finishes"
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--dimensions finalize-col--dimensions-wide" title={item.dimensions || item.size || ""}>
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={item.dimensions || item.size || ""}
+                                          onChange={(e) => {
+                                            updateFinalizeItemField(idx, "dimensions", e.target.value);
+                                            updateFinalizeItemField(idx, "size", e.target.value);
+                                          }}
+                                          placeholder="Dimensions"
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--qty">
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={item.quantity || ""}
+                                          onChange={(e) => updateFinalizeItemField(idx, "quantity", e.target.value)}
+                                          placeholder="Qty"
+                                        />
+                                      </td>
+                                      <td className="finalize-col finalize-col--unit">
+                                        <input
+                                          className="form-input form-input--table"
+                                          value={item.unit || ""}
+                                          onChange={(e) => updateFinalizeItemField(idx, "unit", e.target.value)}
+                                          placeholder="UOM"
+                                        />
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              ) : (
+                                <tr>
+                                  <td colSpan={6} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                                    No items in this section.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          ))}
+                        </table>
+                      </div>
+                    </div>
+                  }
+                />
+              )}
+
+              {activePage === "new-estimate" && activeEstimateStep === "pricing" && (
+                <section id="pricing" className="panel">
+                  <div className="panel__header">
+                    <div>
+                      <p className="eyebrow">Pricing</p>
+                    </div>
+                  </div>
+                  <div className="pricing-accordion">
+                    {PRICING_SECTIONS.map(section => {
+                      const isOpen = activePricingSection === section.id;
+                      return (
+                        <div key={section.id} className={`pricing-accordion__card ${isOpen ? "is-open" : ""}`}>
+                          <button
+                            type="button"
+                            className="pricing-accordion__header"
+                            onClick={() => setActivePricingSection(isOpen ? null : section.id)}
+                            aria-pressed={isOpen}
+                          >
+                            <span className="pricing-accordion__label">{section.label}</span>
+                            <span className={`pricing-accordion__chevron ${isOpen ? "is-open" : ""}`} aria-hidden="true">▾</span>
+                          </button>
+
+                          {isOpen && (
+                            <div className="pricing-accordion__panel">
+                              {section.id === "items" ? (
+                                pricingSelections.length === 0 ? (
+                                  <p className="empty-state" style={{ margin: 0 }}>No items available for pricing yet.</p>
+                                ) : (
+                                  <>
+                                    <div className="table-toolbar" style={{ justifyContent: "flex-end", margin: "0.25rem 0 0.5rem" }}>
+                                      <input
+                                        className="form-input form-input--table"
+                                        placeholder="Search description…"
+                                        value={pricingSearch}
+                                        onChange={(e) => setPricingSearch(e.target.value)}
+                                        style={{ width: "260px" }}
+                                      />
+                                    </div>
+                                    <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                                      <table className="matches-table resizable-table pricing-table">
+                                        <thead>
+                                          <tr>
+                                            <ResizableTh resize={pricingResize} index={0}>Id</ResizableTh>
+                                            <ResizableTh resize={pricingResize} index={1}>Item</ResizableTh>
+                                            <ResizableTh resize={pricingResize} index={2}>Description</ResizableTh>
+                                            <ResizableTh resize={pricingResize} index={3}>Finishes</ResizableTh>
+                                            <ResizableTh resize={pricingResize} index={4}>Dimensions</ResizableTh>
+                                            <ResizableTh resize={pricingResize} index={5}>Qty</ResizableTh>
+                                            <ResizableTh resize={pricingResize} index={6}>Unit</ResizableTh>
+                                            <ResizableTh resize={pricingResize} index={7}>Unit Price</ResizableTh>
+                                            <ResizableTh resize={pricingResize} index={8}>Total Price</ResizableTh>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {filteredPricingSelections.length ? (
+                                            filteredPricingSelections.map(({ sel, idx }) => {
+                                              const rowIdx = idx;
+                                              const matchOptions = pricingMatchOptions[rowIdx] || [];
+                                              return (
+                                                <tr key={`pricing-${rowIdx}`} className="matches-table__row">
+                                                  <td>{rowIdx + 1}</td>
+                                                  <td>
+                                                    {renderCell(sel.item.item_type)}
+                                                  </td>
+                                                  <td>
                                                     <div
-                                                      className="pricing-match-menu"
-                                                      style={
-                                                        pricingDropdownPos[rowIdx]
-                                                          ? {
-                                                            top: pricingDropdownPos[rowIdx].top,
-                                                            left: pricingDropdownPos[rowIdx].left,
-                                                            minWidth: Math.max(180, pricingDropdownPos[rowIdx].width + 8),
-                                                            fontSize: "0.85rem",
-                                                            padding: "0.3rem",
-                                                          }
-                                                          : undefined
-                                                      }
+                                                      className="pricing-desc-cell"
+                                                      ref={(node) => {
+                                                        pricingDropdownRefs.current[rowIdx] = node;
+                                                      }}
+                                                      onBlurCapture={(e) => {
+                                                        const nextTarget = e.relatedTarget as Node | null;
+                                                        if (!nextTarget || !e.currentTarget.contains(nextTarget)) {
+                                                          closeMatchDropdown(rowIdx);
+                                                        }
+                                                      }}
                                                       onMouseLeave={() => closeMatchDropdown(rowIdx)}
                                                     >
-                                                      {matchOptions.length > 0 ? (
-                                                        matchOptions.map((opt, optIdx) => (
-                                                          <button
-                                                            key={`${rowIdx}-match-${optIdx}`}
-                                                            type="button"
-                                                            className={`pricing-match-menu__item ${pricingMatchChoice[rowIdx] === optIdx ? "is-active" : ""
-                                                              }`}
-                                                            style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
-                                                            onClick={() => {
-                                                              handlePricingMatchChange(rowIdx, optIdx);
-                                                              setPricingDropdownOpen((prev) => ({
-                                                                ...prev,
-                                                                [rowIdx]: false,
-                                                              }));
-                                                            }}
+                                                      <span className="pricing-desc-text">
+                                                        {renderCell(sel.item.description || sel.item.full_description)}
+                                                      </span>
+                                                      <>
+                                                        <button
+                                                          type="button"
+                                                          className="pricing-match-trigger"
+                                                          aria-label="Select pricing option"
+                                                          aria-expanded={pricingDropdownOpen[rowIdx] || false}
+                                                          ref={(node) => {
+                                                            pricingTriggerRefs.current[rowIdx] = node;
+                                                          }}
+                                                          onClick={() => openMatchDropdown(rowIdx)}
+                                                        >
+                                                          ▾
+                                                        </button>
+                                                        {pricingDropdownOpen[rowIdx] && (
+                                                          <div
+                                                            className="pricing-match-menu"
+                                                            style={
+                                                              pricingDropdownPos[rowIdx]
+                                                                ? {
+                                                                  top: pricingDropdownPos[rowIdx].top,
+                                                                  left: pricingDropdownPos[rowIdx].left,
+                                                                  minWidth: Math.max(180, pricingDropdownPos[rowIdx].width + 8),
+                                                                  fontSize: "0.85rem",
+                                                                  padding: "0.3rem",
+                                                                }
+                                                                : undefined
+                                                            }
+                                                            onMouseLeave={() => closeMatchDropdown(rowIdx)}
                                                           >
-                                                            {getMatchLabel(opt)}
-                                                          </button>
-                                                        ))
-                                                      ) : (
-                                                        <p className="pricing-match-menu__hint">No suggestions yet. Use search below.</p>
-                                                      )}
-                                                      <div
-                                                        className="pricing-match-search"
-                                                        style={{
-                                                          borderTop: "1px solid #e0e0e0",
-                                                          marginTop: "0.4rem",
-                                                          paddingTop: "0.4rem",
-                                                          display: "flex",
-                                                          flexDirection: "column",
-                                                          gap: "0.35rem",
-                                                        }}
-                                                      >
-                                                        <input
-                                                          id={`pricing-search-${rowIdx}`}
-                                                          className="form-input form-input--table"
-                                                          type="text"
-                                                          placeholder="Search Pricing List…"
-                                                          value={priceListSearch[rowIdx] || ""}
-                                                          style={{ fontSize: "0.85rem", height: "1.9rem" }}
-                                                          onChange={(e) => handlePriceListSearchChange(rowIdx, e.target.value)}
-                                                        />
-                                                        {(() => {
-                                                          const query = priceListSearch[rowIdx] || "";
-                                                          const matches = findPriceListMatches(query);
-                                                          const canSearch = query.trim().length >= 3;
-                                                          if (priceListLoading) {
-                                                            return <p className="pricing-match-menu__hint">Loading pricing list…</p>;
-                                                          }
-                                                          if (priceListError) {
-                                                            return <p className="pricing-match-menu__hint" style={{ color: "#c00" }}>{priceListError}</p>;
-                                                          }
-                                                          if (!canSearch) {
-                                                            return <p className="pricing-match-menu__hint">Type at least 3 characters to search</p>;
-                                                          }
-                                                          if (!matches.length) {
-                                                            return <p className="pricing-match-menu__hint">No matches found</p>;
-                                                          }
-                                                          return (
+                                                            {matchOptions.length > 0 ? (
+                                                              matchOptions.map((opt, optIdx) => (
+                                                                <button
+                                                                  key={`${rowIdx}-match-${optIdx}`}
+                                                                  type="button"
+                                                                  className={`pricing-match-menu__item ${pricingMatchChoice[rowIdx] === optIdx ? "is-active" : ""
+                                                                    }`}
+                                                                  style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
+                                                                  onClick={() => {
+                                                                    handlePricingMatchChange(rowIdx, optIdx);
+                                                                    setPricingDropdownOpen((prev) => ({
+                                                                      ...prev,
+                                                                      [rowIdx]: false,
+                                                                    }));
+                                                                  }}
+                                                                >
+                                                                  {getMatchLabel(opt)}
+                                                                </button>
+                                                              ))
+                                                            ) : (
+                                                              <p className="pricing-match-menu__hint">No suggestions yet. Use search below.</p>
+                                                            )}
                                                             <div
-                                                              className="pricing-match-search__results"
+                                                              className="pricing-match-search"
                                                               style={{
+                                                                borderTop: "1px solid #e0e0e0",
+                                                                marginTop: "0.4rem",
+                                                                paddingTop: "0.4rem",
                                                                 display: "flex",
                                                                 flexDirection: "column",
-                                                                gap: "0.25rem",
-                                                                maxHeight: "140px",
-                                                                overflowY: "auto",
+                                                                gap: "0.35rem",
                                                               }}
                                                             >
-                                                              {matches.map(({ row: priceRow, rowIndex }) => {
-                                                                const label = getPriceListItemLabel(priceRow) || `Item ${rowIndex + 1}`;
-                                                                const description =
-                                                                  (priceRow["Description"] as string) ||
-                                                                  (priceRow["Desc"] as string) ||
-                                                                  "";
+                                                              <input
+                                                                id={`pricing-search-${rowIdx}`}
+                                                                className="form-input form-input--table"
+                                                                type="text"
+                                                                placeholder="Search Pricing List…"
+                                                                value={priceListSearch[rowIdx] || ""}
+                                                                style={{ fontSize: "0.85rem", height: "1.9rem" }}
+                                                                onChange={(e) => handlePriceListSearchChange(rowIdx, e.target.value)}
+                                                              />
+                                                              {(() => {
+                                                                const query = priceListSearch[rowIdx] || "";
+                                                                const matches = findPriceListMatches(query);
+                                                                const canSearch = query.trim().length >= 3;
+                                                                if (priceListLoading) {
+                                                                  return <p className="pricing-match-menu__hint">Loading pricing list…</p>;
+                                                                }
+                                                                if (priceListError) {
+                                                                  return <p className="pricing-match-menu__hint" style={{ color: "#c00" }}>{priceListError}</p>;
+                                                                }
+                                                                if (!canSearch) {
+                                                                  return <p className="pricing-match-menu__hint">Type at least 3 characters to search</p>;
+                                                                }
+                                                                if (!matches.length) {
+                                                                  return <p className="pricing-match-menu__hint">No matches found</p>;
+                                                                }
                                                                 return (
-                                                                  <button
-                                                                    key={`pricing-search-${rowIdx}-${rowIndex}`}
-                                                                    type="button"
-                                                                    className="pricing-match-menu__item"
-                                                                    style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
-                                                                    onClick={() => handleApplyPriceListRow(rowIdx, rowIndex)}
+                                                                  <div
+                                                                    className="pricing-match-search__results"
+                                                                    style={{
+                                                                      display: "flex",
+                                                                      flexDirection: "column",
+                                                                      gap: "0.25rem",
+                                                                      maxHeight: "140px",
+                                                                      overflowY: "auto",
+                                                                    }}
                                                                   >
-                                                                    <span style={{ display: "block", fontWeight: 600 }}>{label}</span>
-                                                                    {description && (
-                                                                      <span className="pricing-match-menu__note" style={{ display: "block", fontSize: "0.85rem", color: "#444" }}>
-                                                                        {description}
-                                                                      </span>
-                                                                    )}
-                                                                  </button>
+                                                                    {matches.map(({ row: priceRow, rowIndex }) => {
+                                                                      const label = getPriceListItemLabel(priceRow) || `Item ${rowIndex + 1}`;
+                                                                      const description =
+                                                                        (priceRow["Description"] as string) ||
+                                                                        (priceRow["Desc"] as string) ||
+                                                                        "";
+                                                                      return (
+                                                                        <button
+                                                                          key={`pricing-search-${rowIdx}-${rowIndex}`}
+                                                                          type="button"
+                                                                          className="pricing-match-menu__item"
+                                                                          style={{ padding: "0.3rem 0.45rem", fontSize: "0.85rem" }}
+                                                                          onClick={() => handleApplyPriceListRow(rowIdx, rowIndex)}
+                                                                        >
+                                                                          <span style={{ display: "block", fontWeight: 600 }}>{label}</span>
+                                                                          {description && (
+                                                                            <span className="pricing-match-menu__note" style={{ display: "block", fontSize: "0.85rem", color: "#444" }}>
+                                                                              {description}
+                                                                            </span>
+                                                                          )}
+                                                                        </button>
+                                                                      );
+                                                                    })}
+                                                                  </div>
                                                                 );
-                                                              })}
+                                                              })()}
                                                             </div>
-                                                          );
-                                                        })()}
-                                                      </div>
+                                                          </div>
+                                                        )}
+                                                      </>
                                                     </div>
-                                                  )}
-                                                </>
-                                              </div>
+                                                  </td>
+                                                  <td>{renderCell(sel.item.finishes)}</td>
+                                                  <td>{renderCell(sel.item.dimensions || sel.item.size)}</td>
+                                                  <td>
+                                                    <input
+                                                      className="form-input form-input--table"
+                                                      type="number"
+                                                      min="0"
+                                                      step="1"
+                                                      value={sel.item.quantity || ""}
+                                                      onChange={(e) => handlePricingItemChange(rowIdx, "quantity", e.target.value)}
+                                                      placeholder="QTY"
+                                                    />
+                                                  </td>
+                                                  <td>{renderCell(sel.item.unit)}</td>
+                                                  <td>
+                                                    {renderCell(sel.item.unit_price)}
+                                                  </td>
+                                                  <td>{renderCell(sel.item.total_price)}</td>
+                                                </tr>
+                                              );
+                                            })
+                                          ) : (
+                                            <tr>
+                                              <td colSpan={9} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
+                                                No items match this description search.
+                                              </td>
+                                            </tr>
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </>
+                                )
+                              ) : section.id === "electrical" ? (
+                                <div className="pricing-electrical">
+                                  <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      onClick={() => loadSheetRows("Electrical", setElectricalSheetRows, setElectricalModalOpen)}
+                                      disabled={priceListLoading}
+                                    >
+                                      Add Items
+                                    </button>
+                                    {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
+                                  </div>
+                                  <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                                    <table className="matches-table resizable-table pricing-table">
+                                      <thead>
+                                        <tr>
+                                          <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {electricalItems.length ? electricalItems.map((row, idx) => (
+                                          <tr key={`electrical-${idx}`} className="matches-table__row">
+                                            <td>{renderCell(row.item)}</td>
+                                            <td>{renderCell("")}</td>
+                                            <td>{renderCell("")}</td>
+                                            <td>
+                                              <input
+                                                className="form-input form-input--table"
+                                                value={row.price}
+                                                onChange={(e) => setElectricalItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                                              />
                                             </td>
-                                            <td>{renderCell(sel.item.finishes)}</td>
-                                            <td>{renderCell(sel.item.dimensions || sel.item.size)}</td>
                                             <td>
                                               <input
                                                 className="form-input form-input--table"
                                                 type="number"
-                                                min="0"
+                                                min="1"
                                                 step="1"
-                                                value={sel.item.quantity || ""}
-                                                onChange={(e) => handlePricingItemChange(rowIdx, "quantity", e.target.value)}
-                                                placeholder="QTY"
+                                                value={row.qty}
+                                                onChange={(e) => setElectricalItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
                                               />
                                             </td>
-                                            <td>{renderCell(sel.item.unit)}</td>
-                                            <td>
-                                              {renderCell(sel.item.unit_price)}
-                                            </td>
-                                            <td>{renderCell(sel.item.total_price)}</td>
+                                            <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
                                           </tr>
-                                        );
-                                      })
-                                    ) : (
-                                      <tr>
-                                        <td colSpan={9} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>
-                                          No items match this description search.
-                                        </td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </>
-                          )
-                        ) : section.id === "electrical" ? (
-                          <div className="pricing-electrical">
-                            <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
-                              <button
-                                type="button"
-                                className="btn-secondary"
-                                onClick={() => loadSheetRows("Electrical", setElectricalSheetRows, setElectricalModalOpen)}
-                                disabled={priceListLoading}
-                              >
-                                Add Items
-                              </button>
-                              {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
+                                        )) : (
+                                          <tr>
+                                            <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No electrical items added.</td>
+                                          </tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : section.id === "installation" ? (
+                                <div className="pricing-installation">
+                                  <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      onClick={() => loadSheetRows("Installation", setInstallationSheetRows, setInstallationModalOpen)}
+                                      disabled={priceListLoading}
+                                    >
+                                      Add Items
+                                    </button>
+                                    {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
+                                  </div>
+                                  <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                                    <table className="matches-table resizable-table pricing-table">
+                                      <thead>
+                                        <tr>
+                                          <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {installationItems.length ? installationItems.map((row, idx) => (
+                                          <tr key={`installation-${idx}`} className="matches-table__row">
+                                            <td>{renderCell(row.item)}</td>
+                                            <td>{renderCell("")}</td>
+                                            <td>{renderCell("")}</td>
+                                            <td>
+                                              <input
+                                                className="form-input form-input--table"
+                                                value={row.price}
+                                                onChange={(e) => setInstallationItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                                              />
+                                            </td>
+                                            <td>
+                                              <input
+                                                className="form-input form-input--table"
+                                                type="number"
+                                                min="1"
+                                                step="1"
+                                                value={row.qty}
+                                                onChange={(e) => setInstallationItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                                              />
+                                            </td>
+                                            <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
+                                          </tr>
+                                        )) : (
+                                          <tr>
+                                            <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No installation items added.</td>
+                                          </tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : section.id === "venue" ? (
+                                <div className="pricing-venue">
+                                  <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      onClick={() => loadSheetRows("Venue services", setVenueSheetRows, setVenueModalOpen)}
+                                      disabled={priceListLoading}
+                                    >
+                                      Add Items
+                                    </button>
+                                    {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
+                                  </div>
+                                  <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                                    <table className="matches-table resizable-table pricing-table">
+                                      <thead>
+                                        <tr>
+                                          <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
+                                          <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {venueItems.length ? venueItems.map((row, idx) => (
+                                          <tr key={`venue-${idx}`} className="matches-table__row">
+                                            <td>{renderCell(row.item)}</td>
+                                            <td>{renderCell("")}</td>
+                                            <td>{renderCell("")}</td>
+                                            <td>
+                                              <input
+                                                className="form-input form-input--table"
+                                                value={row.price}
+                                                onChange={(e) => setVenueItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                                              />
+                                            </td>
+                                            <td>
+                                              <input
+                                                className="form-input form-input--table"
+                                                type="number"
+                                                min="1"
+                                                step="1"
+                                                value={row.qty}
+                                                onChange={(e) => setVenueItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                                              />
+                                            </td>
+                                            <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
+                                          </tr>
+                                        )) : (
+                                          <tr>
+                                            <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No venue services items added.</td>
+                                          </tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="pricing-placeholder">
+                                  <h3>{section.label} pricing</h3>
+                                  <p>We will implement this section soon.</p>
+                                </div>
+                              )}
                             </div>
-                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
-                              <table className="matches-table resizable-table pricing-table">
-                                <thead>
-                                  <tr>
-                                    <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {electricalItems.length ? electricalItems.map((row, idx) => (
-                                    <tr key={`electrical-${idx}`} className="matches-table__row">
-                                      <td>{renderCell(row.item)}</td>
-                                      <td>{renderCell("")}</td>
-                                      <td>{renderCell("")}</td>
-                                      <td>
-                                        <input
-                                          className="form-input form-input--table"
-                                          value={row.price}
-                                          onChange={(e) => setElectricalItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
-                                        />
-                                      </td>
-                                      <td>
-                                        <input
-                                          className="form-input form-input--table"
-                                          type="number"
-                                          min="1"
-                                          step="1"
-                                          value={row.qty}
-                                          onChange={(e) => setElectricalItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
-                                        />
-                                      </td>
-                                      <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
-                                    </tr>
-                                  )) : (
-                                    <tr>
-                                      <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No electrical items added.</td>
-                                    </tr>
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ) : section.id === "installation" ? (
-                          <div className="pricing-installation">
-                            <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
-                              <button
-                                type="button"
-                                className="btn-secondary"
-                                onClick={() => loadSheetRows("Installation", setInstallationSheetRows, setInstallationModalOpen)}
-                                disabled={priceListLoading}
-                              >
-                                Add Items
-                              </button>
-                              {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
-                            </div>
-                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
-                              <table className="matches-table resizable-table pricing-table">
-                                <thead>
-                                  <tr>
-                                    <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {installationItems.length ? installationItems.map((row, idx) => (
-                                    <tr key={`installation-${idx}`} className="matches-table__row">
-                                      <td>{renderCell(row.item)}</td>
-                                      <td>{renderCell("")}</td>
-                                      <td>{renderCell("")}</td>
-                                      <td>
-                                        <input
-                                          className="form-input form-input--table"
-                                          value={row.price}
-                                          onChange={(e) => setInstallationItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
-                                        />
-                                      </td>
-                                      <td>
-                                        <input
-                                          className="form-input form-input--table"
-                                          type="number"
-                                          min="1"
-                                          step="1"
-                                          value={row.qty}
-                                          onChange={(e) => setInstallationItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
-                                        />
-                                      </td>
-                                      <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
-                                    </tr>
-                                  )) : (
-                                    <tr>
-                                      <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No installation items added.</td>
-                                    </tr>
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ) : section.id === "venue" ? (
-                          <div className="pricing-venue">
-                            <div className="table-actions" style={{ justifyContent: "flex-start", gap: "0.75rem", marginBottom: "0.75rem" }}>
-                              <button
-                                type="button"
-                                className="btn-secondary"
-                                onClick={() => loadSheetRows("Venue services", setVenueSheetRows, setVenueModalOpen)}
-                                disabled={priceListLoading}
-                              >
-                                Add Items
-                              </button>
-                              {priceListError && <span style={{ color: "#c0392b" }}>{priceListError}</span>}
-                            </div>
-                            <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
-                              <table className="matches-table resizable-table pricing-table">
-                                <thead>
-                                  <tr>
-                                    <ResizableTh resize={pricingResize} index={0}>Item</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Finishes</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Dimensions</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={1}>Price</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={2}>Quantity</ResizableTh>
-                                    <ResizableTh resize={pricingResize} index={3}>Total</ResizableTh>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {venueItems.length ? venueItems.map((row, idx) => (
-                                    <tr key={`venue-${idx}`} className="matches-table__row">
-                                      <td>{renderCell(row.item)}</td>
-                                      <td>{renderCell("")}</td>
-                                      <td>{renderCell("")}</td>
-                                      <td>
-                                        <input
-                                          className="form-input form-input--table"
-                                          value={row.price}
-                                          onChange={(e) => setVenueItems(prev => prev.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
-                                        />
-                                      </td>
-                                      <td>
-                                        <input
-                                          className="form-input form-input--table"
-                                          type="number"
-                                          min="1"
-                                          step="1"
-                                          value={row.qty}
-                                          onChange={(e) => setVenueItems(prev => prev.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
-                                        />
-                                      </td>
-                                      <td>{renderCell(computeTotalPrice(row.price, row.qty))}</td>
-                                    </tr>
-                                  )) : (
-                                    <tr>
-                                      <td colSpan={4} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No venue services items added.</td>
-                                    </tr>
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="pricing-placeholder">
-                            <h3>{section.label} pricing</h3>
-                            <p>We will implement this section soon.</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-            <div className="table-actions" style={{ paddingTop: "1rem" }}>
-              <button
-                type="button"
-                className="btn-match btn-outline"
-                onClick={() => setActiveEstimateStep("estimate")}
-              >
-                Go to Estimate Generation
-              </button>
-            </div>
-          </section>
-        )}
+                  <div className="table-actions" style={{ paddingTop: "1rem" }}>
+                    <button
+                      type="button"
+                      className="btn-match btn-outline"
+                      onClick={() => setActiveEstimateStep("estimate")}
+                    >
+                      Go to Estimate Generation
+                    </button>
+                  </div>
+                </section>
+              )}
 
-        {activePage === "new-estimate" && activeEstimateStep === "estimate" && (
-          <section id="estimate" className="panel">
-            <div className="panel__header">
-              <div>
-                <p className="eyebrow">Finalize</p>
-                <h2 className="section-title section-title--compact">Final Estimate</h2>
-              </div>
-            </div>
-            <div
-              className="form-grid"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: "0.75rem",
-                marginBottom: "1rem",
-                alignItems: "flex-start",
-              }}
-            >
-              <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                <span className="form-label">Company Name</span>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={estimateCompanyName}
-                  onChange={(e) => setEstimateCompanyName(e.target.value)}
-                  style={estimateInputPaddedStyle}
-                />
-              </div>
-              <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                <span className="form-label">Contact Name</span>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={estimateContactName}
-                  onChange={(e) => setEstimateContactName(e.target.value)}
-                  style={estimateInputPaddedStyle}
-                />
-              </div>
-              <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                <label className="form-label" htmlFor="estimate-project-name">Project Name</label>
-                <input
-                  id="estimate-project-name"
-                  className="form-input"
-                  type="text"
-                  value={estimateProjectName}
-                  onChange={(e) => setEstimateProjectName(e.target.value)}
-                  placeholder="Enter project name"
-                  style={estimateInputPaddedStyle}
-                />
-              </div>
-              <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                <label className="form-label" htmlFor="estimate-subject">Subject</label>
-                <input
-                  id="estimate-subject"
-                  className="form-input"
-                  type="text"
-                  value={estimateSubject}
-                  onChange={(e) => setEstimateSubject(e.target.value)}
-                  placeholder="Enter subject"
-                  style={estimateInputPaddedStyle}
-                />
-              </div>
-            </div>
-            {estimateTableRows.length ? (
-              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
-                <table className="matches-table resizable-table pricing-table">
-                  <thead>
-                    <tr>
-                      <ResizableTh resize={estimateResize} index={0}>Id</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={1}>Description</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={2}>Finishes</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={3}>Dimensions</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={4}>Quantity</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={5}>Unit</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={6}>Unit Price</ResizableTh>
-                      <ResizableTh resize={estimateResize} index={7}>Amount</ResizableTh>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupedEstimateRows.map(group => (
-                      <React.Fragment key={group.label}>
-                        <tr className="matches-table__section-row">
-                          <td colSpan={8} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
-                            {group.label} {group.code ? `(${group.code})` : ""} — {group.rows.length} item(s)
-                          </td>
-                        </tr>
-                        {group.rows.map((row, idx) => (
-                          <tr key={`estimate-${group.label}-${idx}`} className="matches-table__row">
-                            <td>{group.code ? `${group.code}.${idx + 1}` : `${idx + 1}`}</td>
-                            <td>{renderCell(row.description)}</td>
-                            <td>{renderCell(row.finishes)}</td>
-                            <td>{renderCell(row.size)}</td>
-                            <td>{renderCell(row.quantity)}</td>
-                            <td>{renderCell(row.unit)}</td>
-                            <td>{renderCell(row.unitPrice)}</td>
-                            <td>{renderCell(row.totalPrice)}</td>
-                          </tr>
-                        ))}
-                      </React.Fragment>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="matches-table__row estimate-summary-row">
-                      <td />
-                      <td className="estimate-summary-label">Total Cost</td>
-                      <td colSpan={4} />
-                      <td />
-                      <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.totalCost)}</strong></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            ) : (
-              <p className="empty-state">No estimate data to show yet.</p>
-            )}
-            <div className="table-actions" style={{ marginTop: "0.75rem", justifyContent: "flex-end" }}>
-              <button type="button" className="btn-match" onClick={() => void handleGenerateEstimateFiles()}>
-                Generate
-              </button>
-            </div>
-          </section>
-        )}
-
-        {activePage === "new-estimate" && activeEstimateStep === "upload" && (
-          <section id="matches" className="panel">
-            <div className="panel__header">
-              <div>
-                <h2 className="section-title section-title--compact">Upload Drawings, BOQ, or both</h2>
-              </div>
-              <span className="status">{matching ? "Processing…" : "Idle"}</span>
-            </div>
-            <form className="estimate-form" onSubmit={handleExtract}>
-              <div className="uploaders-grid">
-                <label className="dropzone dropzone--estimate uploader-card">
-                  <input
-                    type="file"
-                    accept=".pdf,.docx,.txt"
-                    multiple
-                    onChange={(event) => {
-                      setMatchingFiles(Array.from(event.target.files || []));
-                      setReviewStepActive(false);
+              {activePage === "new-estimate" && activeEstimateStep === "estimate" && (
+                <section id="estimate" className="panel">
+                  <div className="panel__header">
+                    <div>
+                      <p className="eyebrow">Finalize</p>
+                      <h2 className="section-title section-title--compact">Final Estimate</h2>
+                    </div>
+                  </div>
+                  <div
+                    className="form-grid"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                      gap: "0.75rem",
+                      marginBottom: "1rem",
+                      alignItems: "flex-start",
                     }}
-                  />
-                  <div className="dropzone__content">
-                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="dropzone__icon">
-                      <path d="M24 16v16M16 24h16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                      <rect x="8" y="8" width="32" height="32" rx="4" stroke="currentColor" strokeWidth="2" />
-                    </svg>
-                    <p className="dropzone__text">
-                      {matchingFiles.length
-                        ? `${matchingFiles.length} drawing file(s): ${matchingFiles.map(f => f.name).join(", ")}`
-                        : "Drag & drop or browse drawings (PDF, DOCX, TXT)"}
-                    </p>
-                    <p className="dropzone__hint">You can upload multiple drawing files together.</p>
-                  </div>
-                </label>
-
-                <label className="dropzone dropzone--estimate uploader-card">
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg,.docx,.txt,.xlsx,.xls,.csv"
-                    onChange={(event) => {
-                      handleBoqFileChange(event);
-                      setReviewStepActive(false);
-                    }}
-                  />
-                  <div className="dropzone__content">
-                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="dropzone__icon">
-                      <path d="M14 16h20M14 22h20M14 28h14M10 12h2v24h-2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    <p className="dropzone__text">
-                      {selectedBoqFileName
-                        ? `BOQ selected: ${selectedBoqFileName}`
-                        : "Drag & drop or browse BOQ (PDF, Excel, Images)"}
-                    </p>
-                    <p className="dropzone__hint">Upload a single BOQ file to proceed; drawings are optional.</p>
-                  </div>
-                </label>
-              </div>
-              <div className="upload-actions">
-                <button
-                  type="submit"
-                  className="btn-match"
-                  disabled={
-                    matching ||
-                    boqExtractLoading ||
-                    (!matchingFiles.length && !pendingBoqFile)
-                  }
-                >
-                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" />
-                    <path d="M13 13l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  {matching || boqExtractLoading ? "Processing…" : "Review Extraction"}
-                </button>
-              </div>
-            </form>
-
-          </section>
-        )}
-
-        {electricalModalOpen && (
-          <div className="modal-backdrop">
-            <div className="modal" style={{ maxWidth: "620px" }}>
-              <h3>Add Electrical Items</h3>
-              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
-                <table className="matches-table resizable-table pricing-table">
-                  <thead>
-                    <tr>
-                      <th className="checkbox-col"></th>
-                      <th>Item</th>
-                      <th>Price</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {electricalSheetRows.length ? electricalSheetRows.map((row, idx) => (
-                      <tr key={`electrical-modal-${idx}`} className="matches-table__row">
-                        <td className="checkbox-col">
-                          <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setElectricalSheetRows, idx)} />
-                        </td>
-                        <td>{renderCell(row.item)}</td>
-                        <td>
-                          <input
-                            className="form-input form-input--table"
-                            value={row.price}
-                            onChange={(e) => updateSheetPrice(setElectricalSheetRows, idx, e.target.value)}
-                          />
-                        </td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="modal__actions">
-                <button type="button" className="btn-secondary" onClick={() => setElectricalModalOpen(false)}>Cancel</button>
-                <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(electricalSheetRows, setElectricalItems, setElectricalModalOpen)}>Add</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {installationModalOpen && (
-          <div className="modal-backdrop">
-            <div className="modal" style={{ maxWidth: "620px" }}>
-              <h3>Add Installation Items</h3>
-              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
-                <table className="matches-table resizable-table pricing-table">
-                  <thead>
-                    <tr>
-                      <th className="checkbox-col"></th>
-                      <th>Item</th>
-                      <th>Price</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {installationSheetRows.length ? installationSheetRows.map((row, idx) => (
-                      <tr key={`installation-modal-${idx}`} className="matches-table__row">
-                        <td className="checkbox-col">
-                          <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setInstallationSheetRows, idx)} />
-                        </td>
-                        <td>{renderCell(row.item)}</td>
-                        <td>
-                          <input
-                            className="form-input form-input--table"
-                            value={row.price}
-                            onChange={(e) => updateSheetPrice(setInstallationSheetRows, idx, e.target.value)}
-                          />
-                        </td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="modal__actions">
-                <button type="button" className="btn-secondary" onClick={() => setInstallationModalOpen(false)}>Cancel</button>
-                <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(installationSheetRows, setInstallationItems, setInstallationModalOpen)}>Add</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {venueModalOpen && (
-          <div className="modal-backdrop">
-            <div className="modal" style={{ maxWidth: "620px" }}>
-              <h3>Add Venue Services Items</h3>
-              <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
-                <table className="matches-table resizable-table pricing-table">
-                  <thead>
-                    <tr>
-                      <th className="checkbox-col"></th>
-                      <th>Item</th>
-                      <th>Price</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {venueSheetRows.length ? venueSheetRows.map((row, idx) => (
-                      <tr key={`venue-modal-${idx}`} className="matches-table__row">
-                        <td className="checkbox-col">
-                          <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setVenueSheetRows, idx)} />
-                        </td>
-                        <td>{renderCell(row.item)}</td>
-                        <td>
-                          <input
-                            className="form-input form-input--table"
-                            value={row.price}
-                            onChange={(e) => updateSheetPrice(setVenueSheetRows, idx, e.target.value)}
-                          />
-                        </td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="modal__actions">
-                <button type="button" className="btn-secondary" onClick={() => setVenueModalOpen(false)}>Cancel</button>
-                <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(venueSheetRows, setVenueItems, setVenueModalOpen)}>Add</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showDrawingsOnlyConfirm && (
-          <div className="modal-backdrop">
-            <div className="modal">
-              <p>You only uploaded Drawings, no BOQ is provided, Proceed?</p>
-              <div className="modal__actions">
-                <button type="button" className="btn-secondary" onClick={handleCancelDrawingsOnly}>
-                  No
-                </button>
-                <button type="button" className="btn-match" onClick={handleConfirmDrawingsOnly}>
-                  Yes, proceed
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {markdownModalOpen && (
-          <div className="modal-backdrop">
-            <div className="modal" style={{ maxWidth: "860px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
-                <div>
-                  <h3 style={{ marginBottom: "0.25rem" }}>Gemini Markdown</h3>
-                  <p style={{ marginTop: 0, color: "rgba(227,233,255,0.75)" }}>
-                    Generated from the uploaded drawing file(s).
-                  </p>
-                </div>
-                <button type="button" className="btn-secondary" onClick={() => setMarkdownModalOpen(false)}>
-                  Close
-                </button>
-              </div>
-
-              {markdownCandidates.length > 1 && (
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.75rem" }}>
-                  <label style={{ fontWeight: 600 }}>File</label>
-                  <select
-                    className="form-input"
-                    value={markdownFileIdx}
-                    onChange={(e) => setMarkdownFileIdx(Number(e.target.value))}
-                    style={{ height: "2.6rem" }}
                   >
-                    {markdownCandidates.map((row) => (
-                      <option key={`md-file-${row.idx}`} value={row.idx}>
-                        {row.fileName}
-                      </option>
-                    ))}
-                  </select>
+                    <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                      <span className="form-label">Company Name</span>
+                      <input
+                        className="form-input"
+                        type="text"
+                        value={estimateCompanyName}
+                        onChange={(e) => setEstimateCompanyName(e.target.value)}
+                        style={estimateInputPaddedStyle}
+                      />
+                    </div>
+                    <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                      <span className="form-label">Contact Name</span>
+                      <input
+                        className="form-input"
+                        type="text"
+                        value={estimateContactName}
+                        onChange={(e) => setEstimateContactName(e.target.value)}
+                        style={estimateInputPaddedStyle}
+                      />
+                    </div>
+                    <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                      <label className="form-label" htmlFor="estimate-project-name">Project Name</label>
+                      <input
+                        id="estimate-project-name"
+                        className="form-input"
+                        type="text"
+                        value={estimateProjectName}
+                        onChange={(e) => setEstimateProjectName(e.target.value)}
+                        placeholder="Enter project name"
+                        style={estimateInputPaddedStyle}
+                      />
+                    </div>
+                    <div className="form-field" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                      <label className="form-label" htmlFor="estimate-subject">Subject</label>
+                      <input
+                        id="estimate-subject"
+                        className="form-input"
+                        type="text"
+                        value={estimateSubject}
+                        onChange={(e) => setEstimateSubject(e.target.value)}
+                        placeholder="Enter subject"
+                        style={estimateInputPaddedStyle}
+                      />
+                    </div>
+                  </div>
+                  {estimateTableRows.length ? (
+                    <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem" }}>
+                      <table className="matches-table resizable-table pricing-table">
+                        <thead>
+                          <tr>
+                            <ResizableTh resize={estimateResize} index={0}>Id</ResizableTh>
+                            <ResizableTh resize={estimateResize} index={1}>Description</ResizableTh>
+                            <ResizableTh resize={estimateResize} index={2}>Finishes</ResizableTh>
+                            <ResizableTh resize={estimateResize} index={3}>Dimensions</ResizableTh>
+                            <ResizableTh resize={estimateResize} index={4}>Quantity</ResizableTh>
+                            <ResizableTh resize={estimateResize} index={5}>Unit</ResizableTh>
+                            <ResizableTh resize={estimateResize} index={6}>Unit Price</ResizableTh>
+                            <ResizableTh resize={estimateResize} index={7}>Amount</ResizableTh>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {groupedEstimateRows.map(group => (
+                            <React.Fragment key={group.label}>
+                              <tr className="matches-table__section-row">
+                                <td colSpan={8} style={{ fontWeight: 600, background: "rgba(76,110,245,0.08)" }}>
+                                  {group.label} {group.code ? `(${group.code})` : ""} — {group.rows.length} item(s)
+                                </td>
+                              </tr>
+                              {group.rows.map((row, idx) => (
+                                <tr key={`estimate-${group.label}-${idx}`} className="matches-table__row">
+                                  <td>{group.code ? `${group.code}.${idx + 1}` : `${idx + 1}`}</td>
+                                  <td>{renderCell(row.description)}</td>
+                                  <td>{renderCell(row.finishes)}</td>
+                                  <td>{renderCell(row.size)}</td>
+                                  <td>{renderCell(row.quantity)}</td>
+                                  <td>{renderCell(row.unit)}</td>
+                                  <td>{renderCell(row.unitPrice)}</td>
+                                  <td>{renderCell(row.totalPrice)}</td>
+                                </tr>
+                              ))}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="matches-table__row estimate-summary-row">
+                            <td />
+                            <td className="estimate-summary-label">Total Cost</td>
+                            <td colSpan={4} />
+                            <td />
+                            <td className="estimate-summary-value"><strong>{formatNumber(estimateTotals.totalCost)}</strong></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="empty-state">No estimate data to show yet.</p>
+                  )}
+                  <div className="table-actions" style={{ marginTop: "0.75rem", justifyContent: "flex-end" }}>
+                    <button type="button" className="btn-match" onClick={() => void handleGenerateEstimateFiles()}>
+                      Generate
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {activePage === "new-estimate" && activeEstimateStep === "upload" && (
+                <section id="matches" className="panel">
+                  <div className="panel__header">
+                    <div>
+                      <h2 className="section-title section-title--compact">Upload Drawings, BOQ, or both</h2>
+                    </div>
+                    <span className="status">{matching ? "Processing…" : "Idle"}</span>
+                  </div>
+                  <form className="estimate-form" onSubmit={handleExtract}>
+                    <div className="uploaders-grid">
+                      <label className="dropzone dropzone--estimate uploader-card">
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,.txt"
+                          multiple
+                          onChange={(event) => {
+                            const files = Array.from(event.target.files || []);
+                            setMatchingFiles(files);
+                            setReviewStepActive(false);
+                            // Prepare PDF previews for "manual parse" (LandingAI visualizer) without re-calling the API.
+                            drawingPdfPreviews.forEach((p) => {
+                              if (p.url.startsWith("blob:")) URL.revokeObjectURL(p.url);
+                            });
+                            const pdfs = files.filter(
+                              (f) => (f.type || "").toLowerCase() === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
+                            );
+                            setDrawingPdfPreviews(pdfs.map((f) => ({ fileName: f.name, url: URL.createObjectURL(f) })));
+                          }}
+                        />
+                        <div className="dropzone__content">
+                          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="dropzone__icon">
+                            <path d="M24 16v16M16 24h16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                            <rect x="8" y="8" width="32" height="32" rx="4" stroke="currentColor" strokeWidth="2" />
+                          </svg>
+                          <p className="dropzone__text">
+                            {matchingFiles.length
+                              ? `${matchingFiles.length} drawing file(s): ${matchingFiles.map(f => f.name).join(", ")}`
+                              : "Drag & drop or browse drawings (PDF, DOCX, TXT)"}
+                          </p>
+                          <p className="dropzone__hint">You can upload multiple drawing files together.</p>
+                        </div>
+                      </label>
+
+                      <label className="dropzone dropzone--estimate uploader-card">
+                        <input
+                          type="file"
+                          accept=".pdf,.png,.jpg,.jpeg,.docx,.txt,.xlsx,.xls,.csv"
+                          onChange={(event) => {
+                            handleBoqFileChange(event);
+                            setReviewStepActive(false);
+                          }}
+                        />
+                        <div className="dropzone__content">
+                          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="dropzone__icon">
+                            <path d="M14 16h20M14 22h20M14 28h14M10 12h2v24h-2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <p className="dropzone__text">
+                            {selectedBoqFileName
+                              ? `BOQ selected: ${selectedBoqFileName}`
+                              : "Drag & drop or browse BOQ (PDF, Excel, Images)"}
+                          </p>
+                          <p className="dropzone__hint">Upload a single BOQ file to proceed; drawings are optional.</p>
+                        </div>
+                      </label>
+                    </div>
+                    <div className="upload-actions">
+                      <button
+                        type="submit"
+                        className="btn-match"
+                        disabled={
+                          matching ||
+                          boqExtractLoading ||
+                          (!matchingFiles.length && !pendingBoqFile)
+                        }
+                      >
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" />
+                          <path d="M13 13l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                        {matching || boqExtractLoading ? "Processing…" : "Review Extraction"}
+                      </button>
+                    </div>
+                  </form>
+
+                </section>
+              )}
+
+              {electricalModalOpen && (
+                <div className="modal-backdrop">
+                  <div className="modal" style={{ maxWidth: "620px" }}>
+                    <h3>Add Electrical Items</h3>
+                    <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
+                      <table className="matches-table resizable-table pricing-table">
+                        <thead>
+                          <tr>
+                            <th className="checkbox-col"></th>
+                            <th>Item</th>
+                            <th>Price</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {electricalSheetRows.length ? electricalSheetRows.map((row, idx) => (
+                            <tr key={`electrical-modal-${idx}`} className="matches-table__row">
+                              <td className="checkbox-col">
+                                <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setElectricalSheetRows, idx)} />
+                              </td>
+                              <td>{renderCell(row.item)}</td>
+                              <td>
+                                <input
+                                  className="form-input form-input--table"
+                                  value={row.price}
+                                  onChange={(e) => updateSheetPrice(setElectricalSheetRows, idx, e.target.value)}
+                                />
+                              </td>
+                            </tr>
+                          )) : (
+                            <tr>
+                              <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="modal__actions">
+                      <button type="button" className="btn-secondary" onClick={() => setElectricalModalOpen(false)}>Cancel</button>
+                      <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(electricalSheetRows, setElectricalItems, setElectricalModalOpen)}>Add</button>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              <div
-                style={{
-                  maxHeight: "70vh",
-                  overflow: "auto",
-                  border: "1px solid rgba(227,233,255,0.18)",
-                  borderRadius: "14px",
-                }}
-              >
-                <pre
-                  style={{
-                    margin: 0,
-                    padding: "1rem",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-                    fontSize: "0.9rem",
-                    lineHeight: 1.4,
-                  }}
-                >
-                  {(extractedFiles[markdownFileIdx]?.markdown ?? "").trim().length
-                    ? extractedFiles[markdownFileIdx]?.markdown
-                    : markdownCandidates.map((row) => `## ${row.fileName}\n\n${row.markdown}`.trim()).join("\n\n---\n\n")}
-                </pre>
-              </div>
+              {installationModalOpen && (
+                <div className="modal-backdrop">
+                  <div className="modal" style={{ maxWidth: "620px" }}>
+                    <h3>Add Installation Items</h3>
+                    <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
+                      <table className="matches-table resizable-table pricing-table">
+                        <thead>
+                          <tr>
+                            <th className="checkbox-col"></th>
+                            <th>Item</th>
+                            <th>Price</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {installationSheetRows.length ? installationSheetRows.map((row, idx) => (
+                            <tr key={`installation-modal-${idx}`} className="matches-table__row">
+                              <td className="checkbox-col">
+                                <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setInstallationSheetRows, idx)} />
+                              </td>
+                              <td>{renderCell(row.item)}</td>
+                              <td>
+                                <input
+                                  className="form-input form-input--table"
+                                  value={row.price}
+                                  onChange={(e) => updateSheetPrice(setInstallationSheetRows, idx, e.target.value)}
+                                />
+                              </td>
+                            </tr>
+                          )) : (
+                            <tr>
+                              <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="modal__actions">
+                      <button type="button" className="btn-secondary" onClick={() => setInstallationModalOpen(false)}>Cancel</button>
+                      <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(installationSheetRows, setInstallationItems, setInstallationModalOpen)}>Add</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {venueModalOpen && (
+                <div className="modal-backdrop">
+                  <div className="modal" style={{ maxWidth: "620px" }}>
+                    <h3>Add Venue Services Items</h3>
+                    <div className="table-wrapper table-wrapper--no-x pricing-table-wrapper" style={{ marginTop: "0.5rem", maxHeight: "360px", overflowY: "auto" }}>
+                      <table className="matches-table resizable-table pricing-table">
+                        <thead>
+                          <tr>
+                            <th className="checkbox-col"></th>
+                            <th>Item</th>
+                            <th>Price</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {venueSheetRows.length ? venueSheetRows.map((row, idx) => (
+                            <tr key={`venue-modal-${idx}`} className="matches-table__row">
+                              <td className="checkbox-col">
+                                <input type="checkbox" checked={!!row.selected} onChange={() => toggleSheetSelection(setVenueSheetRows, idx)} />
+                              </td>
+                              <td>{renderCell(row.item)}</td>
+                              <td>
+                                <input
+                                  className="form-input form-input--table"
+                                  value={row.price}
+                                  onChange={(e) => updateSheetPrice(setVenueSheetRows, idx, e.target.value)}
+                                />
+                              </td>
+                            </tr>
+                          )) : (
+                            <tr>
+                              <td colSpan={3} style={{ textAlign: "center", color: "rgba(227,233,255,0.7)" }}>No data in sheet.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="modal__actions">
+                      <button type="button" className="btn-secondary" onClick={() => setVenueModalOpen(false)}>Cancel</button>
+                      <button type="button" className="btn-match" onClick={() => addSelectedSheetItems(venueSheetRows, setVenueItems, setVenueModalOpen)}>Add</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showDrawingsOnlyConfirm && (
+                <div className="modal-backdrop">
+                  <div className="modal">
+                    <p>You only uploaded Drawings, no BOQ is provided, Proceed?</p>
+                    <div className="modal__actions">
+                      <button type="button" className="btn-secondary" onClick={handleCancelDrawingsOnly}>
+                        No
+                      </button>
+                      <button type="button" className="btn-match" onClick={handleConfirmDrawingsOnly}>
+                        Yes, proceed
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
-          </div>
+
+          </>
         )}
 
         {feedback && <p className="feedback">{feedback}</p>}

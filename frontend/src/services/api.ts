@@ -180,6 +180,7 @@ export async function requestMatches(payload: MatchPayload): Promise<AirweaveMat
 
 export interface ExtractedFile {
   fileName: string;
+  link_to_file?: string;
   attributes: AttributeMap;
   items: ExtractedItem[];
   totalPrice?: string;
@@ -195,6 +196,26 @@ export async function extractEstimates(files: File[]): Promise<ExtractResponse> 
   const data = new FormData();
   files.forEach((file) => data.append("buildFiles", file));
   return safeFetch(`${API_BASE}/api/estimates/extract`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export interface LandingAiParsedFile {
+  fileName: string;
+  markdown: string;
+  raw: unknown;
+  debug?: unknown;
+}
+
+export interface LandingAiParseResponse {
+  files: LandingAiParsedFile[];
+}
+
+export async function parseLandingAi(files: File[]): Promise<LandingAiParseResponse> {
+  const data = new FormData();
+  files.forEach((file) => data.append("buildFiles", file));
+  return safeFetch(`${API_BASE}/api/estimates/landingai/parse`, {
     method: "POST",
     body: data,
   });
