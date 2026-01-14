@@ -58,6 +58,63 @@ const matchUpload = upload.fields([
 
 const router = Router();
 
+// Resolve a missing `/files/<storedName>` link (common when opening drafts on a different machine/container).
+// Given `storedName` and/or `originalName`, try to find an existing file in STATIC_DIR and return a working `/files/...` URL.
+router.get("/files/resolve", async (req, res, next) => {
+  try {
+    const storedName = String(req.query.storedName ?? "").trim();
+    const originalName = String(req.query.originalName ?? "").trim();
+
+    if (!storedName && !originalName) {
+      return res.status(400).json({ message: "storedName or originalName is required" });
+    }
+
+    const dir = path.resolve(config.staticDir);
+
+    // 1) Fast path: exact stored file exists.
+    if (storedName) {
+      const candidate = path.join(dir, path.basename(storedName));
+      try {
+        await fs.stat(candidate);
+        return res.status(200).json({ url: `/files/${path.basename(storedName)}`, resolvedBy: "exact" });
+      } catch {
+        // continue
+      }
+    }
+
+    // 2) Fallback: find newest file that ends with `-${originalName}` (timestamp-prefix convention).
+    if (originalName) {
+      const suffix = `-${originalName.replace(/\s+/g, "_")}`;
+      const entries = await fs.readdir(dir);
+      const matches = entries.filter((name) => name.endsWith(suffix));
+      if (!matches.length) {
+        return res.status(404).json({ message: "File not found on server" });
+      }
+
+      let bestName = matches[0]!;
+      let bestMtime = 0;
+      for (const name of matches) {
+        try {
+          const st = await fs.stat(path.join(dir, name));
+          const m = st.mtimeMs ?? 0;
+          if (m > bestMtime) {
+            bestMtime = m;
+            bestName = name;
+          }
+        } catch {
+          // ignore this candidate
+        }
+      }
+
+      return res.status(200).json({ url: `/files/${bestName}`, resolvedBy: "suffix-latest" });
+    }
+
+    return res.status(404).json({ message: "File not found on server" });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // LandingAI parse endpoint: returns raw ADE parse JSON + markdown grounding info.
 // This is used by the optional "visual review" UI; it does not affect existing flows.
 router.post("/landingai/parse", matchUpload, async (req, res, next) => {
