@@ -16,6 +16,7 @@ import {
   extractBoq,
   compareLists,
   enrichBoqItems,
+  getExtractJob,
   listDrafts,
   saveDraft,
   getDraft,
@@ -26,6 +27,7 @@ import {
 } from "./services/api";
 import { useAuth } from "./contexts/AuthContext";
 import LandingAiReview from "./LandingAiReview";
+import { v4 as uuidv4 } from "uuid";
 
 const COMPANY_LOGO_URL = "/company.png";
 const COMPANY_NAME = "XYZ";
@@ -748,9 +750,15 @@ function App() {
     setPricingSelections([]);
   }, [boqResults.comparisons]);
 
+  // Generic user-facing progress steps (do not mention tools/vendors)
   const loadingMessages = [
-    "AI is Extracting the Attributes..."
+    "Reading the drawing…",
+    "Extracting key details…",
+    "Analyzing the drawing…",
+    "Finalizing results…",
   ];
+
+  const [aiProgressMessage, setAiProgressMessage] = useState<string>("");
 
   const resetEstimateFlow = useCallback(() => {
     hydratingDraftRef.current = false;
@@ -891,7 +899,7 @@ function App() {
 
   const processingMessage = processingAI
     ? matching
-      ? loadingMessages[loadingStage] || loadingMessages[0]
+      ? (aiProgressMessage || loadingMessages[loadingStage] || loadingMessages[0])
       : "Processing documents with AI..."
     : "";
 
@@ -1333,22 +1341,56 @@ function App() {
       }
       setSelectedDrawingRows({});
       setSelectedBoqRows({});
-
-      let stageInterval: ReturnType<typeof setInterval> | null = null;
-      if (hasDrawings) {
-        stageInterval = setInterval(() => {
-          setLoadingStage(prev => {
-            const next = prev + 1;
-            return next < loadingMessages.length ? next : prev;
-          });
-        }, 1500);
-      }
+      // Progress is now driven by backend job stage polling (no timer-based fake progress).
 
       try {
         let drawingsSucceeded = false;
         if (hasDrawings) {
-          const payload = await extractEstimates(matchingFiles);
-          if (stageInterval) clearInterval(stageInterval);
+          const idempotencyKey = uuidv4();
+          const startResp = await extractEstimates(matchingFiles, idempotencyKey) as any;
+
+          // If backend returns the legacy synchronous shape, accept it.
+          let payload: any = startResp;
+
+          // Async job flow: poll until job is done.
+          if (!payload?.files && startResp?.jobId) {
+            const jobId = String(startResp.jobId);
+            const startedAt = Date.now();
+            const maxWaitMs = 20 * 60 * 1000; // 20 minutes
+            while (Date.now() - startedAt < maxWaitMs) {
+              const job = await getExtractJob(jobId);
+              const stage = String(job?.stage || "").toLowerCase();
+              // Map backend stages to our existing UI steps (no vendor/tool names)
+              if (stage === "landingai-parse") {
+                setLoadingStage(0);
+                setAiProgressMessage("Reading the drawing…");
+              } else if (stage === "landingai-extract") {
+                setLoadingStage(1);
+                setAiProgressMessage("Extracting key details…");
+              } else if (stage === "gemini") {
+                setLoadingStage(2);
+                setAiProgressMessage("Analyzing the drawing…");
+              } else if (stage === "finalizing") {
+                setLoadingStage(3);
+                setAiProgressMessage("Finalizing results…");
+              } else if (job?.message) {
+                // fallback: allow backend to drive a generic message
+                setAiProgressMessage(String(job.message));
+              }
+              if (job?.status === "done") {
+                payload = job.result ?? { files: [] };
+                break;
+              }
+              if (job?.status === "failed") {
+                throw new Error(job?.error?.message || "Extraction job failed");
+              }
+              await new Promise((r) => setTimeout(r, 1500));
+            }
+            if (!payload?.files) {
+              throw new Error("Extraction job timed out");
+            }
+          }
+
           const files = (payload.files ?? []).map((f: any) => {
             const existingItems = Array.isArray(f?.items) ? f.items : [];
             const parsedFromGemini = existingItems.length ? existingItems : parseGeminiItemsToExtractedItems(String(f?.markdown ?? ""));
@@ -1374,7 +1416,7 @@ function App() {
           }
           setMarkdownFileIdx(0);
           const drawingSelection: Record<string, boolean> = {};
-          files.forEach((file, fileIdx) =>
+          files.forEach((file: any, fileIdx: number) =>
             (file.items || []).forEach((_item: ExtractedItem, itemIdx: number) => {
               drawingSelection[`d-${fileIdx}-${itemIdx}`] = true;
             })
@@ -1418,7 +1460,6 @@ function App() {
           setActiveEstimateStep("review");
         }
       } catch (error) {
-        if (stageInterval) clearInterval(stageInterval);
         const errorMessage = (error as Error).message;
         setFeedback(errorMessage);
         setTimeout(() => setFeedback(""), 5000);
@@ -1426,10 +1467,10 @@ function App() {
           setExtractedFiles([]);
         }
       } finally {
-        if (stageInterval) clearInterval(stageInterval);
         setMatching(false);
         setProcessingAI(false);
         setLoadingStage(0);
+        setAiProgressMessage("");
       }
     },
     [enrichBoqSizeAndCapacity, loadingMessages.length, matchingFiles, pendingBoqFile, parseGeminiItemsToExtractedItems]

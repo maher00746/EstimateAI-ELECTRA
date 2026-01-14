@@ -167,6 +167,7 @@ async function waitForFileReady(
 export async function generateDrawingMarkdownWithGemini(params: {
   filePath: string;
   fileName: string;
+  onStage?: (stage: "landingai-parse" | "landingai-extract" | "gemini") => void | Promise<void>;
 }): Promise<{ markdown: string; rawText: string; debug?: any }> {
   // Fail soft: if Gemini isn't configured, return empty markdown so the app continues to work.
   if (!config.geminiApiKey) {
@@ -186,6 +187,7 @@ export async function generateDrawingMarkdownWithGemini(params: {
   let landingExtractionRaw: any = null;
   if (mimeType === "application/pdf" && config.landingAiApiKey) {
     try {
+      await params.onStage?.("landingai-parse");
       console.log(`[LandingAI] Parsing PDF to markdown: ${params.fileName}`);
       const parsed = await parseWithLandingAiToMarkdown({ filePath: params.filePath, fileName: params.fileName });
       landingMarkdown = (parsed.markdown || "").trim();
@@ -196,6 +198,7 @@ export async function generateDrawingMarkdownWithGemini(params: {
       // New step: use LandingAI ADE Extract (multipart/form-data) to get structured BOQ items from markdown.
       if (landingMarkdown) {
         try {
+          await params.onStage?.("landingai-extract");
           console.log(`[LandingAI] Extracting BOQ items from markdown: ${params.fileName}`);
           const extracted = await extractBoqItemsWithLandingAi({
             markdown: landingMarkdown,
@@ -226,6 +229,7 @@ export async function generateDrawingMarkdownWithGemini(params: {
     }
   }
 
+  await params.onStage?.("gemini");
   console.log(`[Gemini] Uploading file: ${params.fileName} (${mimeType})`);
 
   // Upload file so we can pass the full binary (PDF/images) to Gemini.

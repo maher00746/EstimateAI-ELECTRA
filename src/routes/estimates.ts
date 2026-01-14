@@ -27,6 +27,9 @@ import { loadElectricalTotals, calculateProjectCost } from "../services/pricing/
 import { mapItemsToPriceList } from "../services/openai/priceMapper";
 import { generateDrawingMarkdownWithGemini } from "../services/gemini/drawingMarkdown";
 import { parseWithLandingAiToMarkdown } from "../services/landingai/parseToMarkdown";
+import { ExtractJobModel } from "../modules/storage/extractJobModel";
+import { kickOffExtractJob } from "../services/extraction/extractJobProcessor";
+import { AuthRequest } from "../middleware/auth";
 
 interface CandidateSummary {
   id: string;
@@ -473,6 +476,16 @@ router.post("/upload-multiple", upload.array("buildFiles", 10), async (req, res,
 // Extract-only endpoint: parse files with OpenAI, return attributes, no DB or Airweave
 router.post("/extract", matchUpload, async (req, res, next) => {
   try {
+    const userId = (req as AuthRequest).user?._id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentication required." });
+    }
+
+    const idempotencyKey = String(req.headers["idempotency-key"] ?? "").trim();
+    if (!idempotencyKey) {
+      return res.status(400).json({ message: "Idempotency-Key header is required" });
+    }
+
     const fileFields = (req.files ?? {}) as Record<string, unknown>;
     const multiFiles = Array.isArray((fileFields as any).buildFiles)
       ? ((fileFields as any).buildFiles as Express.Multer.File[])
@@ -486,41 +499,76 @@ router.post("/extract", matchUpload, async (req, res, next) => {
       return res.status(400).json({ message: "At least one buildFile is required" });
     }
 
-    const parsedFiles = await Promise.all(
-      files.map(async (file) => {
-        // 1) Gemini markdown review (send the original drawing file as-is).
-        // This works for PDF/image drawings and is kept separate from drawings item extraction.
-        let geminiMarkdown = "";
-        let geminiDebug: unknown = null;
-        try {
-          const geminiResp = await generateDrawingMarkdownWithGemini({
-            filePath: file.path,
-            fileName: file.originalname,
-          });
-          geminiMarkdown = geminiResp.markdown || "";
-          geminiDebug = (geminiResp as any).debug ?? null;
-        } catch (err) {
-          console.error("[extract] Gemini markdown generation failed:", err);
+    // Create or reuse job (idempotency per user)
+    try {
+      const storedFiles = files.map((f) => ({
+        originalName: f.originalname,
+        storedPath: f.path,
+        storedName: path.basename(f.path),
+      }));
+
+      const job = await ExtractJobModel.create({
+        userId,
+        idempotencyKey,
+        status: "queued",
+        stage: "queued",
+        message: "Queued",
+        files: storedFiles,
+        result: null,
+        error: null,
+      });
+
+      // Respond immediately to avoid LB/proxy timeouts, then process in background.
+      res.status(202).json({ jobId: job._id, status: job.status });
+      await kickOffExtractJob(String(job._id));
+      return;
+    } catch (err: any) {
+      // Duplicate idempotency key -> return existing job status/result
+      if (err?.code === 11000) {
+        const existing = await ExtractJobModel.findOne({ userId, idempotencyKey }).exec();
+        if (!existing) {
+          return res.status(409).json({ message: "Duplicate idempotency key" });
         }
+        if (existing.status === "done") {
+          return res.status(200).json(existing.result ?? { files: [] });
+        }
+        if (existing.status === "failed") {
+          return res.status(409).json({ jobId: existing._id, status: existing.status, error: existing.error });
+        }
+        return res.status(202).json({ jobId: existing._id, status: existing.status });
+      }
+      throw err;
+    }
+  } catch (error) {
+    next(error);
+  }
+});
 
-        // 2) Drawings extraction (OpenAI JSON items) - disabled by default.
-        // Do NOT delete this code; keep it behind a flag so it can be re-enabled later.
-        const parsed = config.enableDrawingsExtraction
-          ? await parseDocument(file.path)
-          : { attributes: {}, items: [], totalPrice: undefined as string | undefined };
-        return {
-          fileName: file.originalname,
-          link_to_file: `/files/${path.basename(file.path)}`,
-          attributes: parsed.attributes,
-          items: parsed.items,
-          totalPrice: parsed.totalPrice,
-          markdown: geminiMarkdown,
-          geminiDebug,
-        };
-      })
-    );
+// Poll extraction job status/result
+router.get("/extract/jobs/:jobId", async (req, res, next) => {
+  try {
+    const userId = (req as AuthRequest).user?._id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentication required." });
+    }
+    const jobId = String(req.params.jobId || "").trim();
+    if (!jobId) return res.status(400).json({ message: "jobId is required" });
 
-    res.status(200).json({ files: parsedFiles });
+    const job = await ExtractJobModel.findOne({ _id: jobId, userId }).exec();
+    if (!job) return res.status(404).json({ message: "Job not found" });
+
+    res.status(200).json({
+      jobId: job._id,
+      status: job.status,
+      stage: job.stage ?? null,
+      message: job.message ?? null,
+      result: job.status === "done" ? job.result ?? null : null,
+      error: job.status === "failed" ? job.error ?? null : null,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      startedAt: job.startedAt ?? null,
+      finishedAt: job.finishedAt ?? null,
+    });
   } catch (error) {
     next(error);
   }

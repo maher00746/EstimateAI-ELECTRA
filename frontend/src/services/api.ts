@@ -192,12 +192,32 @@ export interface ExtractResponse {
   files: ExtractedFile[];
 }
 
-export async function extractEstimates(files: File[]): Promise<ExtractResponse> {
+export async function extractEstimates(files: File[], idempotencyKey: string): Promise<{ jobId: string; status: string } | ExtractResponse> {
   const data = new FormData();
   files.forEach((file) => data.append("buildFiles", file));
   return safeFetch(`${API_BASE}/api/estimates/extract`, {
     method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
     body: data,
+  });
+}
+
+export interface ExtractJobStatusResponse {
+  jobId: string;
+  status: "queued" | "processing" | "done" | "failed";
+  stage?: string | null;
+  message?: string | null;
+  result?: ExtractResponse | null;
+  error?: { message: string; details?: unknown } | null;
+  createdAt?: string;
+  updatedAt?: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}
+
+export async function getExtractJob(jobId: string): Promise<ExtractJobStatusResponse> {
+  return safeFetch(`${API_BASE}/api/estimates/extract/jobs/${encodeURIComponent(jobId)}`, {
+    method: "GET",
   });
 }
 
