@@ -221,18 +221,6 @@ export async function parseLandingAi(files: File[]): Promise<LandingAiParseRespo
   });
 }
 
-export async function resolveUploadedFileUrl(params: {
-  storedName?: string;
-  originalName?: string;
-}): Promise<{ url: string; resolvedBy: string }> {
-  const qs = new URLSearchParams();
-  if (params.storedName) qs.set("storedName", params.storedName);
-  if (params.originalName) qs.set("originalName", params.originalName);
-  return safeFetch(`${API_BASE}/api/estimates/files/resolve?${qs.toString()}`, {
-    method: "GET",
-  });
-}
-
 export interface CreateFromTemplatePayload {
   originalName: string;
   attributes: AttributeMap;

@@ -4,10 +4,10 @@ import { Document, Page, pdfjs } from "react-pdf";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 
-// Vite: import the worker as a URL so it is served correctly in dev/prod.
-// This avoids runtime resolution to `/src/pdfjs-dist/...` (which 404s to HTML and breaks strict MIME checks).
-import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
+).toString();
 
 type NormalizedBox = { left: number; top: number; right: number; bottom: number };
 type LandingAiChunk = {

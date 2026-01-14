@@ -23,7 +23,6 @@ import {
   fetchPriceList,
   fetchDrawingPrompt,
   updateDrawingPrompt,
-  resolveUploadedFileUrl,
 } from "./services/api";
 import { useAuth } from "./contexts/AuthContext";
 import LandingAiReview from "./LandingAiReview";
@@ -308,35 +307,7 @@ function App() {
     const pdfs = extractedFiles
       .filter((f: any) => typeof f?.link_to_file === "string" && f.fileName?.toLowerCase?.().endsWith(".pdf"))
       .map((f: any) => ({ fileName: f.fileName as string, url: f.link_to_file as string }));
-    if (!pdfs.length) return;
-
-    let cancelled = false;
-    (async () => {
-      // Validate each stored /files URL; if missing, ask backend to resolve latest matching upload.
-      const resolved = await Promise.all(
-        pdfs.map(async (p) => {
-          const storedName = String(p.url || "").split("/").pop() || "";
-          try {
-            const head = await fetch(p.url, { method: "HEAD" });
-            if (head.ok) return p;
-          } catch {
-            // ignore
-          }
-          try {
-            const r = await resolveUploadedFileUrl({ storedName, originalName: p.fileName });
-            if (r?.url) return { fileName: p.fileName, url: r.url };
-          } catch {
-            // ignore
-          }
-          return p;
-        })
-      );
-      if (!cancelled) setDrawingPdfPreviews(resolved);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    if (pdfs.length) setDrawingPdfPreviews(pdfs);
   }, [drawingPdfPreviews.length, extractedFiles]);
   const mapSheetRows = useCallback((rows: PriceListRow[]): SheetItem[] => {
     return rows
